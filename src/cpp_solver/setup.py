@@ -30,8 +30,8 @@ ext_modules = [
 
 setup(
     name="fast_solver",
-    version="2.0",
-    author="Antigravity",
+    version="1.0",
+    author="Flavio Drogo",
     description="Optimized C++ Solver for Matrix Factorization",
     ext_modules=ext_modules,
 )

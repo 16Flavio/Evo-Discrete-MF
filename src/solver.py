@@ -1,9 +1,5 @@
-DEBUG = 1
 import time
 import numpy as np
-import matplotlib
-matplotlib.use('TkAgg')
-import matplotlib.pyplot as plt
 
 from .local_search import optimize_alternating_wrapper
 from .createChild import generateNewGeneration, align_parents
@@ -106,13 +102,17 @@ def ruin_and_recreate(W, G_L, G_U, ruin_percent=0.2):
         
     return W_new
 
-def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashes, current_phase, restart_count, population):
+def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashes, current_phase, restart_count, population, config=None):
     """
     ENHANCED RESTART STRATEGY V2
     - Level 1 (Count 1): Soft Restart (Keep Best + Diverse)
     - Level 2 (Count 2): Ruins & Recreate (LNS) on Best
     - Level 3+ (Count > 2): Alien Restart (Antithetic)
     """
+    actual_restart_count = restart_count
+    if config and config.restart_mode == "SIMPLE":
+        actual_restart_count = 1
+
     # Config Phase
     if current_phase == 'DIRECT':
         X_gen = X
@@ -135,8 +135,7 @@ def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashe
 
     # --- STRATÉGIE DE RESTART ---
     
-    if restart_count == 1:
-        if DEBUG: print(f"\n>>> RESTART #1 [Phase:{current_phase}] (Soft - Keep Best + Diverse) <<<")
+    if actual_restart_count == 1:
         new_population.append([best_f, (ref_W.copy(), ref_H.copy())])
         
         # Keep 3 diverse high-quality individuals
@@ -155,8 +154,7 @@ def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashe
                 if diverse_count >= 3: break
         sigma = range_val * 0.15
 
-    elif restart_count == 2:
-        if DEBUG: print(f"\n>>> RESTART #2 [Phase:{current_phase}] (Medium - RUINS & RECREATE) <<<")
+    elif actual_restart_count == 2:
         
         # 1. Keep the Best (Elitism) - CRITICAL FIX
         new_population.append([best_f, (ref_W.copy(), ref_H.copy())])
@@ -171,7 +169,6 @@ def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashe
         sigma = range_val * 0.30
 
     else:
-        if DEBUG: print(f"\n>>> RESTART #{restart_count} [Phase:{current_phase}] (HARD - ALIEN/ANTITHETIC) <<<")
         # Generate Antithetic from the SECOND best to avoid cycling
         target_W = ref_W
         if len(population) > 1: target_W = population[1][1][0]
@@ -186,7 +183,7 @@ def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashe
 
     # 1. Nouvelles Graines "Hallucinées" (Noisy Init)
     fresh_W_list = generate_population_W(
-        X_gen, r, int(N), G_L, G_U, P_L, P_U, 
+        X_gen, r, int(N), G_L, G_U, P_L, P_U, config=config,
         verbose=False, perturbation_sigma=sigma
     )
     
@@ -194,7 +191,7 @@ def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashe
         if len(new_population) >= N: break
         H_rand = np.random.randint(P_L, P_U + 1, size=(r, n))
         W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f_gen, W_cand, H_rand, G_L, G_U, P_L, P_U, max_iters=15, effort=1
+            X_f_gen, W_cand, H_rand, G_L, G_U, P_L, P_U, config=config, max_iters=15, effort=1
         )
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
         if child_hash not in seen_hashes:
@@ -221,7 +218,7 @@ def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashe
 
         H_rand = np.random.randint(P_L, P_U + 1, size=(r, n))
         W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f_gen, W_mut, H_rand, G_L, G_U, P_L, P_U, max_iters=10, effort=1
+            X_f_gen, W_mut, H_rand, G_L, G_U, P_L, P_U, config=config, max_iters=10, effort=1
         )
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
         if child_hash not in seen_hashes:
@@ -231,49 +228,17 @@ def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashe
     new_population.sort(key=lambda x: x[0])
     return new_population
 
-# --- PLOTTING HELPER ---
-
-def plot_debug_snapshot(trace_iter, trace_best, trace_avg, population, title_suffix):
-    """
-    Affiche une figure statique avec l'évolution de l'erreur (si dispo)
-    et la distribution actuelle de la population.
-    """
-    current_pop_errors = [p[0] for p in population]
-    
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle(f"Analyse Solver: {title_suffix}")
-    
-    # Graph 1: Evolution
-    if len(trace_iter) > 0:
-        ax1.plot(trace_iter, trace_best, label='Best Error', color='red', linewidth=2)
-        ax1.plot(trace_iter, trace_avg, label='Avg Population', color='blue', alpha=0.6)
-        ax1.set_title("Evolution de l'Erreur")
-        ax1.set_xlabel("Iterations")
-        ax1.set_ylabel("Erreur (Fitness)")
-        ax1.legend()
-        ax1.grid(True, linestyle='--', alpha=0.5)
-    else:
-        ax1.text(0.5, 0.5, "Pas assez de données pour l'évolution", 
-                 horizontalalignment='center', verticalalignment='center')
-        ax1.set_title("Evolution de l'Erreur (Vide)")
-
-    # Graph 2: Distribution
-    ax2.hist(current_pop_errors, bins=15, color='green', alpha=0.7, edgecolor='black')
-    ax2.set_title(f"Distribution Population (N={len(population)})")
-    ax2.set_xlabel("Erreur")
-    ax2.set_ylabel("Nombre d'individus")
-    ax2.grid(True, linestyle='--', alpha=0.5)
-    
-    print(f"\n[DEBUG] Affichage graphique : {title_suffix}")
-    print("Fermez la fenêtre du graphique pour continuer l'exécution...")
-    plt.show()
-
 # --- METAHEURISTIC MAIN ---
 
-def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size=4, mutation_rate=0.1):
+def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size=4, mutation_rate=0.1, config=None):
     """
     Main metaheuristic function for solving the matrix factorization problem.
     """
+
+    if config is None:
+        from src.config import ConfigAblation
+        config = ConfigAblation()
+
     start_time = time.time()
     m, n = X.shape
     X_f = X.astype(float)
@@ -292,8 +257,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     global_best_f = float('inf')
 
     # --- 1. INITIALISATION ---
-    if DEBUG: print("Initialisation...")
-    pop_W_list = generate_population_W(X, r, N, LW, UW, LH, UH, verbose=DEBUG)
+    pop_W_list = generate_population_W(X, r, N, LW, UW, LH, UH, config=config, verbose=False)
     
     for i, W_cand in enumerate(pop_W_list):
         if time.time() - start_time > TIME_LIMIT - 5: break
@@ -302,7 +266,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         eff = 2 if i < (N // 5) else 1
         
         W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f, W_cand, H_rand, LW, UW, LH, UH, max_iters=iters, effort=eff
+            X_f, W_cand, H_rand, LW, UW, LH, UH, config=config, max_iters=iters, effort=eff
         )
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
         if child_hash not in seen_hashes:
@@ -353,18 +317,19 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         if stagnation_counter > 10: switch_triggered = True
         elif iters_in_phase > 30: switch_triggered = True
             
-        if switch_triggered:
+        if switch_triggered and config.allow_transpose:
             if current_phase == 'DIRECT':
                 current_phase = 'TRANSPOSE'
                 population = transpose_population(population)
-                if DEBUG: print(f"   >>> [SWITCH -> TRANSPOSE] (Best Local: {best_f:.1f})")
             else:
                 current_phase = 'DIRECT'
                 population = transpose_population(population)
-                if DEBUG: print(f"   >>> [SWITCH -> DIRECT] (Best Local: {best_f:.1f})")
             iters_in_phase = 0
             stagnation_counter = max(0, stagnation_counter - 5)
             min_diff_percent = min(0.05, min_diff_percent * 1.5)
+        elif switch_triggered and not config.allow_transpose:
+            stagnation_counter = 0
+            iters_in_phase = 0
 
         # B. Préparation
         if current_phase == 'DIRECT':
@@ -379,7 +344,8 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         children = generateNewGeneration(
             temp_hashes, population, N//3, active_X, 
             G_L, G_U, P_L, P_U, 
-            start_time, TIME_LIMIT, int(curr_tourn), float(curr_mut)
+            start_time, TIME_LIMIT, int(curr_tourn), float(curr_mut),
+            config=config
         )
         
         # D. Réintégration (Global Competition)
@@ -416,12 +382,11 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 if best_f < global_best_f:
                     global_best_f = best_f
                     global_best_W, global_best_H = best_W.copy(), best_H.copy()
-                    if DEBUG: print(f"Iter {iteration}: GLOBAL BEST {global_best_f:.2f} | Time: {time.time()-start_time:.2f} seconds")
 
                 # Intensification
                 W_c, H_c = current_best[1]
                 W_boost, H_boost, f_boost = optimize_alternating_wrapper(
-                    active_X.astype(float), W_c, H_c, G_L, G_U, P_L, P_U, max_iters=100, effort=3
+                    active_X.astype(float), W_c, H_c, G_L, G_U, P_L, P_U, config=config, max_iters=100, effort=3
                 )
                 if f_boost < best_f:
                      best_f = f_boost
@@ -432,8 +397,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                      if best_f < global_best_f:
                         global_best_f = best_f
                         global_best_W, global_best_H = best_W.copy(), best_H.copy()
-                        if DEBUG: print(f"   >>> Boost Global: {global_best_f:.2f} | Time: {time.time()-start_time:.2f} seconds")
-
+                        
                 curr_mut = max(0.05, curr_mut * 0.9)
                 curr_tourn = min(8, curr_tourn + 1)
             else:
@@ -456,7 +420,8 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
             
             population = apply_smart_restart(
                 best_W, best_H, best_f, N, X, LW, UW, LH, UH, 
-                seen_hashes, current_phase, restart_count, population
+                seen_hashes, current_phase, restart_count, population,
+                config=config
             )
             best_f = population[0][0]
             if current_phase == 'DIRECT':
@@ -481,16 +446,11 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     final_W, final_H, final_f = global_best_W, global_best_H, global_best_f
 
     if remaining > 1.0:
-        if DEBUG: print(f"Final Polish on Global Best ({remaining:.1f}s)...")
         final_W, final_H, final_f = optimize_alternating_wrapper(
-            X_f, final_W, final_H, LW, UW, LH, UH, max_iters=2000, effort=3, time_limit=remaining
+            X_f, final_W, final_H, LW, UW, LH, UH, config=config, max_iters=2000, effort=3, time_limit=remaining
         )
     
     if final_f < global_best_f:
         global_best_W, global_best_H, global_best_f = final_W, final_H, final_f
-
-    # --- PLOT FINAL RESULT ---
-    # if DEBUG:
-    #     plot_debug_snapshot(trace_iter, trace_best, trace_avg, population, "Résultat Final (Post-Optimisation)")
 
     return global_best_W, global_best_H, global_best_f

@@ -1,7 +1,7 @@
 import numpy as np
 import time
 from sklearn.decomposition import TruncatedSVD
-from .initialisationKMEANS import integer_kmeans, initialize_WH_alternating_descent
+from .initialisationKMEANS import integer_kmeans
 from .initialisationNMF import ExtendedNMF, round_matrix
 
 # --- 1. SVD SMART (Classique) ---
@@ -114,7 +114,7 @@ def generate_antithetic_W(W, LW, UW):
 
 # --- POPULATION GENERATION ---
 
-def generate_population_W(X, r, N, LW, UW, LH, UH, verbose=False, perturbation_sigma=0.0):
+def generate_population_W(X, r, N, LW, UW, LH, UH, config=None, verbose=False, perturbation_sigma=0.0):
     """
     Generates the initial population of W matrices.
     Uses a mix of SVD, Greedy Residual, KMeans, NMF, and Column Sampling, 
@@ -133,30 +133,34 @@ def generate_population_W(X, r, N, LW, UW, LH, UH, verbose=False, perturbation_s
         if verbose: print(f"--> Génération Hybride (Clean)...")
 
     # A. Graines Structurelles
-    try:
-        W_svd = initialize_SVD_smart(X_work, r, LW, UW)
-        if W_svd.tobytes() not in seen_hashes:
-            population_W.append(W_svd); seen_hashes.add(W_svd.tobytes())
-    except: pass
+    if config is None or config.use_svd:
+        try:
+            W_svd = initialize_SVD_smart(X_work, r, LW, UW)
+            if W_svd.tobytes() not in seen_hashes:
+                population_W.append(W_svd); seen_hashes.add(W_svd.tobytes())
+        except: pass
 
-    try:
-        W_res = initialize_greedy_residual(X_work, r, LW, UW, LH, UH)
-        if W_res.tobytes() not in seen_hashes:
-            population_W.append(W_res); seen_hashes.add(W_res.tobytes())
-    except: pass
+    if config is None or config.use_greedy:
+        try:
+            W_res = initialize_greedy_residual(X_work, r, LW, UW, LH, UH)
+            if W_res.tobytes() not in seen_hashes:
+                population_W.append(W_res); seen_hashes.add(W_res.tobytes())
+        except: pass
 
-    try:
-        W_kmeans = integer_kmeans(X_work, r, LW, UW)
-        if W_kmeans.tobytes() not in seen_hashes:
-            population_W.append(W_kmeans); seen_hashes.add(W_kmeans.tobytes())
-    except: pass
+    if config is None or config.use_kmeans:
+        try:
+            W_kmeans = integer_kmeans(X_work, r, LW, UW)
+            if W_kmeans.tobytes() not in seen_hashes:
+                population_W.append(W_kmeans); seen_hashes.add(W_kmeans.tobytes())
+        except: pass
 
-    try:
-        W_nmf_float, _, _ = ExtendedNMF(X_work, r, max_iter=500)
-        W_nmf = round_matrix(W_nmf_float, LW, UW)
-        if W_nmf.tobytes() not in seen_hashes:
-            population_W.append(W_nmf); seen_hashes.add(W_nmf.tobytes())
-    except: pass
+    if config is None or config.use_nmf:
+        try:
+            W_nmf_float, _, _ = ExtendedNMF(X_work, r, max_iter=500)
+            W_nmf = round_matrix(W_nmf_float, LW, UW)
+            if W_nmf.tobytes() not in seen_hashes:
+                population_W.append(W_nmf); seen_hashes.add(W_nmf.tobytes())
+        except: pass
     
     # B. Remplissage Diversifié
     target_sampling = int(N * 0.35)

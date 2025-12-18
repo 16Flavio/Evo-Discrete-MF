@@ -19,7 +19,7 @@ def align_parents(W1, W2):
     else:
         return W2
 
-def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH, start, TIME_LIMIT, tournament_size, mutation_rate):
+def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH, start, TIME_LIMIT, tournament_size, mutation_rate, config=None):
     """
     Generates a new generation of children using C++ batch processing.
     It performs selection, crossover, and mutation in parallel.
@@ -29,6 +29,30 @@ def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH,
         Pop_H = [p[1][1].astype(np.int32) for p in population]
         Pop_Fitness = [float(p[0]) for p in population]
         
+        crossover_mode_int = 0
+        if config and config.crossover_type == "UNIFORM":
+            crossover_mode_int = 1
+        elif config and config.crossover_type == "MEAN":
+            crossover_mode_int = 2
+
+        mutation_mode_int = 0
+        if config and config.mutation_type == "SWAP":
+            mutation_mode_int = 1
+        elif config and config.mutation_type == "GREEDY":
+            mutation_mode_int = 2
+        elif config and config.mutation_type == "NOISE":
+            mutation_mode_int = 3
+
+        mode_opti = ""
+        if config and config.factorization_mode == "IMF":
+            mode_opti = "IMF"
+        elif config and config.factorization_mode == "BMF":
+            mode_opti = "BMF"
+        elif config and config.factorization_mode == "RELU":
+            mode_opti = "RELU"
+
+        current_cpp_seed = np.random.randint(0, 2**31-1)
+
         # Appel optimisé au C++
         raw_results = generate_children_batch(
             X.astype(float),
@@ -36,7 +60,11 @@ def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH,
             int(num_child),
             int(tournament_size),
             float(mutation_rate),
-            int(LW), int(UW), int(LH), int(UH)
+            int(LW), int(UW), int(LH), int(UH),
+            int(crossover_mode_int),
+            int(mutation_mode_int),
+            str(mode_opti),
+            int(current_cpp_seed)
         )
         
         children = []
@@ -57,7 +85,8 @@ def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH,
                     W, H, 
                     LW, UW, LH, UH,
                     max_iters=100,
-                    effort=3
+                    effort=3,
+                    config=config
                 )
                 
                 if f_opt < fitness:

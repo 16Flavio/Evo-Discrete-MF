@@ -1,6 +1,47 @@
 import numpy as np
 import os
 
+def read_txt_file_bmf(filename: str):
+    """
+    Lit un fichier d'instance de matrice selon le format du projet.
+
+    Args:
+        filename (str): Le chemin absolu vers le fichier .txt.
+
+    Returns:
+        - X (np.ndarray): La matrice X (m x n) en entiers.
+    """
+    print(f"  -> Lecture de l'instance : {filename}")
+    if not os.path.exists(filename):
+        print(f"  -> ERREUR: Fichier non trouvé.")
+        return None
+
+    with open(filename, 'r') as f:
+        # 1. Lire la première ligne (m, n)
+        try:
+            premiere_ligne = f.readline().split()
+            m, n = map(int, premiere_ligne)
+        except Exception as e:
+            print(f"  -> ERREUR: Impossible de lire la première ligne. {e}")
+            return None
+            
+        print(f"     Params: m={m}, n={n}")
+
+        # 2. Lire les 'm' lignes suivantes directement dans un array NumPy
+        try:
+            X = np.loadtxt(f, dtype=int, max_rows=m)
+        except Exception as e:
+            print(f"  -> ERREUR: Impossible de lire la matrice X. {e}")
+            return None
+
+        # 3. Vérifier la taille pour être sûr
+        if X.shape != (m, n):
+            print(f"  -> ERREUR: La matrice lue a une taille {X.shape}, attendue ({m}, {n})")
+            return None
+            
+        print(f"     Matrice X de taille {X.shape} lue avec succès.")
+        return X
+
 def read_txt_file(filename: str):
     """
     Lit un fichier d'instance de matrice selon le format du projet.
@@ -9,42 +50,41 @@ def read_txt_file(filename: str):
         filename (str): Le chemin absolu vers le fichier .txt.
 
     Returns:
-        tuple: (X, r, LW, UW, LH, UH)
+        tuple: (X, LW, UW, LH, UH)
             - X (np.ndarray): La matrice X (m x n) en entiers.
-            - r (int): Le rang cible.
             - LW, UW (int): Bornes pour W.
             - LH, UH (int): Bornes pour H.
     """
     print(f"  -> Lecture de l'instance : {filename}")
     if not os.path.exists(filename):
         print(f"  -> ERREUR: Fichier non trouvé.")
-        return None, 0, 0, 0, 0, 0
+        return None, 0, 0, 0, 0
 
     with open(filename, 'r') as f:
-        # 1. Lire la première ligne (m, n, r, LW, UW, LH, UH)
+        # 1. Lire la première ligne (m, n, LW, UW, LH, UH)
         try:
             premiere_ligne = f.readline().split()
-            m, n, r, LW, UW, LH, UH = map(int, premiere_ligne)
+            m, n, LW, UW, LH, UH = map(int, premiere_ligne)
         except Exception as e:
             print(f"  -> ERREUR: Impossible de lire la première ligne. {e}")
-            return None, 0, 0, 0, 0, 0
+            return None, 0, 0, 0, 0
             
-        print(f"     Params: m={m}, n={n}, r={r}, LW={LW}, UW={UW}, LH={LH}, UH={UH}")
+        print(f"     Params: m={m}, n={n}, LW={LW}, UW={UW}, LH={LH}, UH={UH}")
 
         # 2. Lire les 'm' lignes suivantes directement dans un array NumPy
         try:
             X = np.loadtxt(f, dtype=int, max_rows=m)
         except Exception as e:
             print(f"  -> ERREUR: Impossible de lire la matrice X. {e}")
-            return None, 0, 0, 0, 0, 0
+            return None, 0, 0, 0, 0
 
         # 3. Vérifier la taille pour être sûr
         if X.shape != (m, n):
             print(f"  -> ERREUR: La matrice lue a une taille {X.shape}, attendue ({m}, {n})")
-            return None, 0, 0, 0, 0, 0
+            return None, 0, 0, 0, 0
             
         print(f"     Matrice X de taille {X.shape} lue avec succès.")
-        return X, r, LW, UW, LH, UH
+        return X, LW, UW, LH, UH
     
 def write_txt_file(filename: str, f_obj: int, W: np.ndarray, H: np.ndarray):
     """

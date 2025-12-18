@@ -6,6 +6,14 @@ def fobj(X,W,H):
   f = np.linalg.norm(X-W@H,'fro')**2 #ou alors, sans NumPy : f = sum(sum((X-W@H)**2))
   return round(f)
 
+def fobj_bmf(X,W,H):
+  f = np.linalg.norm(X-np.minimum(1,W@H),'fro')**2
+  return round(f)
+
+def fobj_relu(X,W,H):
+  f = np.linalg.norm(X-np.maximum(0,W@H),'fro')**2
+  return round(f)
+
 def solutionIsFeasible(W,H,r,LW,UW,LH,UH):
   if W.shape[1] != r or H.shape[0] != r:
     return False
