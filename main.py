@@ -38,7 +38,7 @@ def main():
     parser.add_argument("--no-nmf", action="store_true", help="Désactiver NMF Init")
     parser.add_argument("--no-greedy", action="store_true", help="Désactiver Greedy Init")
     
-    parser.add_argument("--crossover", type=str, choices=['UNIFORM', 'MEAN', 'BOTH'], default='UNIFORM',
+    parser.add_argument("--crossover", type=str, choices=['UNIFORM', 'MEAN', 'BOTH'], default='BOTH',
                         help="Type de Crossover : UNIFORM (mélange) ou MEAN (moyenne)")
     
     parser.add_argument("--restart-mode", type=str, choices=['FULL', 'SIMPLE'], default='FULL', 
@@ -47,7 +47,7 @@ def main():
     parser.add_argument("--no-transpose", action="store_true", help="Désactiver le changement de phase (Transpose)")
     
     parser.add_argument("--debug-mode", action="store_true", help="Activer le mode debug pour plus d'infos")
-    parser.add_argument("--mutation-type", type=str, choices=['SWAP', 'GREEDY', 'NOISE', 'ALL'], default='SWAP',
+    parser.add_argument("--mutation-type", type=str, choices=['SWAP', 'GREEDY', 'NOISE', 'ALL'], default='ALL',
                         help="Type de mutation à utiliser")
     parser.add_argument("--factorization-mode", type=str, choices=['IMF', 'BMF', 'RELU'], default='IMF',    
                         help="Mode de factorisation : IMF (entière), BMF (binaire), RELU (avec ReLU)")

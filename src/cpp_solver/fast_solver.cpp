@@ -207,123 +207,213 @@ double solve_matrix_imf(const MatrixXd& Target, const MatrixXd& Base, MatrixXi& 
     return total_final_error;
 }
 
-// --- 2. SOLVE BMF ---
-
+// --- 2. SOLVE BMF (Optimized Boolean: 1+1=1) ---
 double solve_matrix_bmf(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Target, int L, int U) {
+    // Fixed = W (m x r) [Binaire], Target = H (r x n) [Binaire]
     int m = (int)X.rows();
     int n = (int)X.cols();
     int r = (int)Fixed.cols();
+
+    // Conversion pour accès rapide (Column-Major par défaut dans Eigen, donc accès rapide aux colonnes de W)
+    // On garde Fixed en MatrixXi pour la logique.
     
-    MatrixXi P = Fixed * Target; 
-    MatrixXd Pd = P.cast<double>();
-    
-    bool improved = true;
-    int iter = 0;
-    int max_iters = 10;
-    
-    while (improved && iter < max_iters) {
-        improved = false;
-        iter++;
+    double total_error = 0.0;
+
+    #pragma omp parallel for schedule(dynamic, 4) reduction(+:total_error)
+    for (int j = 0; j < n; ++j) {
+        // Copie locale de la colonne H (Target)
+        VectorXi h_col = Target.col(j);
         
-        for (int j = 0; j < n; ++j) {       
-            for (int k = 0; k < r; ++k) {   
+        // 1. Initialisation du vecteur de couverture (Cover Count)
+        // P[i] = nombre de facteurs k tels que W[i,k]=1 ET H[k,j]=1
+        // C'est un produit matriciel arithmétique standard pour compter.
+        VectorXi coverage = Fixed * h_col; 
+
+        bool improved = true;
+        int iter = 0;
+        int max_iters = 15; 
+
+        // Pré-calcul des indices des 1 dans chaque colonne de W pour aller vite
+        // (Optionnel : si W est très creux, on pourrait le faire hors de la boucle j, 
+        // mais ici on accède directement à la mémoire contiguë d'Eigen).
+
+        while (improved && iter < max_iters) {
+            improved = false;
+            iter++;
+            
+            // On teste le flip de chaque bit k de H
+            // Stratégie "Best Improvement" ou "First Improvement"
+            // Ici : Greedy Best Improvement par colonne
+            
+            int best_k = -1;
+            int best_gain = 0;
+            int best_action = 0; // 1 (0->1) ou -1 (1->0)
+
+            for (int k = 0; k < r; ++k) {
+                int h_val = h_col(k);
+                int action = (h_val == 0) ? 1 : -1; // Si 0 on veut passer à 1, si 1 on veut passer à 0
                 
-                int current_val = Target(k, j);
-                int new_val = 1 - current_val; 
-                int delta = new_val - current_val; 
-                
-                double gain = 0.0;
+                int gain = 0;
+
+                // On ne regarde QUE les lignes i où W(i, k) == 1
+                // C'est là que l'accélération se fait vs l'approche naïve O(m)
+                // En Eigen, Fixed.col(k) est un itérateur efficace.
                 
                 for (int i = 0; i < m; ++i) {
-                    if (Fixed(i, k) != 0) {
-                        double x_ij = X(i, j);
-                        double p_ij = Pd(i, j);
-                        double p_new_ij = p_ij + (double)(Fixed(i, k) * delta);
-                        
-                        gain += (x_ij - p_ij)*(x_ij - p_ij) - (x_ij - p_new_ij)*(x_ij - p_new_ij);
-                    }
-                }
-                
-                if (gain > 1e-6) { 
-                    Target(k, j) = new_val;
-                    for (int i = 0; i < m; ++i) {
-                        if (Fixed(i, k) != 0) {
-                            P(i, j) += Fixed(i, k) * delta;
-                            Pd(i, j) = (double)P(i, j);
+                    // Note: Si W est stocké sparse, on pourrait itérer seulement les non-zéros.
+                    // Avec Eigen Dense, on teste :
+                    if (Fixed(i, k) == 0) continue;
+
+                    int x_val = (int)X(i, j); // 0 ou 1
+                    int cov = coverage(i);    // 0, 1, 2...
+
+                    // CAS 1 : FLIP 0 -> 1 (Ajout d'un facteur)
+                    if (action == 1) {
+                        // L'ajout n'a d'impact que si la couverture passe de 0 à 1.
+                        // Si cov > 0, le pixel est déjà allumé (1+1=1), donc pas de changement d'erreur.
+                        if (cov == 0) {
+                            // On passe de 0 (éteint) à 1 (allumé)
+                            if (x_val == 1) gain++; // C'était 1, on a allumé -> Bien (+1)
+                            else gain--;            // C'était 0, on a allumé -> Mal (-1)
                         }
                     }
-                    improved = true;
+                    // CAS 2 : FLIP 1 -> 0 (Retrait d'un facteur)
+                    else {
+                        // Le retrait n'a d'impact que si la couverture passe de 1 à 0.
+                        // Si cov > 1, le pixel reste allumé par un autre facteur.
+                        if (cov == 1) {
+                            // On passe de 1 (allumé) à 0 (éteint)
+                            if (x_val == 1) gain--; // C'était 1, on a éteint -> Mal (-1)
+                            else gain++;            // C'était 0, on a éteint -> Bien (+1)
+                        }
+                    }
+                }
+
+                if (gain > best_gain) {
+                    best_gain = gain;
+                    best_k = k;
+                    best_action = action;
                 }
             }
+
+            if (best_gain > 0) {
+                // Appliquer le flip
+                h_col(best_k) += best_action;
+                
+                // Mettre à jour la couverture (uniquement là où W vaut 1)
+                for (int i = 0; i < m; ++i) {
+                    if (Fixed(i, best_k) == 1) {
+                        coverage(i) += best_action;
+                    }
+                }
+                improved = true;
+            }
+        }
+
+        Target.col(j) = h_col;
+
+        // Calcul erreur Hamming finale
+        // Erreur = Somme |X - (Coverage > 0)|
+        for(int i=0; i<m; ++i) {
+            int pred = (coverage(i) > 0) ? 1 : 0;
+            if ((int)X(i, j) != pred) total_error += 1.0;
         }
     }
-    return (X - Pd).squaredNorm();
+
+    return total_error;
 }
 
-// --- 3. SOLVE RELU ---
-
+// --- 3. SOLVE RELU (Optimized with OpenMP) ---
 double solve_matrix_relu(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Target, int L, int U) {
     int m = (int)X.rows();
     int n = (int)X.cols();
     int r = (int)Fixed.cols();
     
-    MatrixXd Fd = Fixed.cast<double>();
-    MatrixXd Td = Target.cast<double>();
-    MatrixXd P = Fd * Td; 
+    MatrixXd Fd = Fixed.cast<double>(); // m x r
     
-    bool improved = true;
-    int iter = 0;
-    int max_iters = 15;
-    
-    while (improved && iter < max_iters) {
-        improved = false;
-        iter++;
-        
-        for (int k = 0; k < r; ++k) {
-            for (int j = 0; j < n; ++j) {
-                
+    // Pour ReLU, on ne peut pas utiliser facilement la matrice de Gram (M = W'W) 
+    // car la non-linéarité (max(0, ...)) dépend des lignes individuelles.
+    // On garde l'approche itérative mais on la parallélise massivement.
+
+    double total_error = 0.0;
+
+    #pragma omp parallel for schedule(dynamic, 4) reduction(+:total_error)
+    for (int j = 0; j < n; ++j) {
+        // Copie locale de la colonne cible
+        VectorXi current_col = Target.col(j);
+        VectorXd current_col_d = current_col.cast<double>();
+
+        // Pré-calcul de la prédiction actuelle pour cette colonne P = W * h
+        VectorXd P = Fd * current_col_d;
+
+        bool improved = true;
+        int iter = 0;
+        int max_iters = 15;
+
+        while (improved && iter < max_iters) {
+            improved = false;
+            iter++;
+
+            // Optimisation coordonnée par coordonnée (CD)
+            for (int k = 0; k < r; ++k) {
                 double numerator = 0.0;
                 double denominator = 0.0;
                 
+                // Calcul du gradient partiel sur les lignes actives
+                // On cherche delta tel que || X - ReLU(P + delta*W_k) ||^2 est min
+                // Approximation : on linéarise autour de l'état actif actuel
                 for (int i = 0; i < m; ++i) {
                     double fix_val = Fd(i, k);
-                    if (abs(fix_val) < 1e-9) continue;
-                    
-                    double p_val = P(i, j);
-                    
-                    if (p_val > 0 || (p_val <= 0 && X(i, j) > 0)) {
-                        numerator += (X(i, j) - p_val) * fix_val;
+                    if (std::abs(fix_val) < 1e-9) continue; // Sparse optimization
+
+                    double p_val = P(i);
+                    double x_val = X(i, j);
+
+                    // Condition active du ReLU :
+                    // Si le pixel est "allumé" par la reconstruction (p_val > 0)
+                    // OU s'il devrait l'être car X est positif (p_val <= 0 && x_val > 0) -> heuristic
+                    if (p_val > 0 || (p_val <= 0 && x_val > 0)) {
+                        // Residual r = x - p
+                        numerator += (x_val - p_val) * fix_val;
                         denominator += fix_val * fix_val;
                     }
                 }
-                
+
                 if (denominator > 1e-9) {
                     double delta = numerator / denominator;
                     
-                    double old_val = Td(k, j);
-                    double new_val_raw = old_val + delta;
+                    // On teste la nouvelle valeur
+                    double old_val_d = current_col_d(k);
+                    double new_val_raw = old_val_d + delta;
                     
-                    int new_val_int = (int)round(new_val_raw);
+                    int new_val_int = (int)std::round(new_val_raw);
                     if (new_val_int < L) new_val_int = L;
                     if (new_val_int > U) new_val_int = U;
                     
-                    if (new_val_int != Target(k, j)) {
-                        int diff = new_val_int - Target(k, j);
-                        Target(k, j) = new_val_int;
-                        Td(k, j) = (double)new_val_int;
+                    if (new_val_int != current_col(k)) {
+                        double diff = (double)new_val_int - old_val_d;
                         
-                        for (int i = 0; i < m; ++i) {
-                            if (Fd(i, k) != 0) {
-                                P(i, j) += Fd(i, k) * diff;
-                            }
-                        }
+                        // Mise à jour
+                        current_col(k) = new_val_int;
+                        current_col_d(k) = (double)new_val_int;
+
+                        // Mise à jour incrémentale de P (O(m))
+                        // C'est mieux que de tout recalculer
+                        P += Fd.col(k) * diff;
                         improved = true;
                     }
                 }
             }
         }
+
+        Target.col(j) = current_col;
+
+        // Calcul erreur finale (avec ReLU)
+        // (X - max(0, P))^2
+        total_error += (X.col(j) - P.cwiseMax(0.0)).squaredNorm();
     }
-    return (X - P.cwiseMax(0.0)).squaredNorm();
+
+    return total_error;
 }
 
 // --- ALIGNMENT ---

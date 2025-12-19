@@ -39,6 +39,6 @@ class ConfigAblation:
         self.debug_mode = False  # Si True, affiche des informations de debug supplémentaires
 
     def __str__(self):
-        return (f"Config(SVD={self.use_svd}, KMEANS={self.use_kmeans}, "
+        return (f"Config(SVD={self.use_svd}, KMEANS={self.use_kmeans}, NMF={self.use_nmf}, GREEDY={self.use_greedy}, "
                 f"CROSS={self.crossover_type}, RESTART={self.restart_mode}, "
-                f"TRANSPOSE={self.allow_transpose}), MUTATION={self.mutation_type}, DEBUG={self.debug_mode})")
+                f"TRANSPOSE={self.allow_transpose}, MUTATION={self.mutation_type}, DEBUG={self.debug_mode})")
