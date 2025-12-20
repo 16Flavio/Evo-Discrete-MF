@@ -3,6 +3,7 @@ import subprocess
 import statistics
 import sys
 import csv
+import glob
 
 # ================= CONFIGURATION DU BENCHMARK =================
 
@@ -10,77 +11,62 @@ import csv
 CURRENT_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_SCRIPT_DIR)
 
-# Chemins absolus reconstruits
+# Chemins
 SCRIPT_PATH = os.path.join(PROJECT_ROOT, "main.py")
-INPUT_FILE = os.path.join(PROJECT_ROOT, "data", "imf_matrix", "Houdain_547x745_m1616m1616.txt") 
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "results", "imf_matrix", "benchmark_temp")
+IMF_DATA_DIR = os.path.join(PROJECT_ROOT, "data", "imf_matrix")
+OUTPUT_BASE_DIR = os.path.join(PROJECT_ROOT, "results")
+CSV_FILENAME = "benchmark_summary_IMF.csv"
 
 PYTHON_EXEC = sys.executable 
-NB_RUNS = 30
-TIME_LIMIT = 60.0
-RANK = 10
+NB_RUNS = 30          # Réduit pour tester rapidement (mettre 30 pour prod)
+TIME_LIMIT = 120.0    # Temps limite PAR FICHIER
+RANK = 10            # Rang de factorisation fixe
 
 # LISTE DES SEEDS (Common Random Numbers)
-# On fixe une liste de seeds pour que chaque config soit testée sur les mêmes bases aléatoires.
-SEEDS = [i + 1000 for i in range(NB_RUNS)] # [1000, 1001, ..., 1019]
+SEEDS = [i + 1000 for i in range(NB_RUNS)]
 
-# Scénarios de benchmark
-SCENARIOS = [
-    {
-        "name": "IMF_Benchmark",
-        "input_file": os.path.join(PROJECT_ROOT, "data", "imf_matrix", "Houdain_547x745_m1616m1616.txt"),
-        "mode": "IMF",
-        "csv_name": "benchmark_summary_IMF.csv"
-    },
-    {
-        "name": "BMF_Benchmark",
-        "input_file": os.path.join(PROJECT_ROOT, "data", "bmf_matrix", "binarizedCBCL.txt"),
-        "mode": "BMF",
-        "csv_name": "benchmark_summary_BMF.csv"
-    }
-]
-
-# Configurations à tester
+# Configurations à tester (Celles de votre fichier original)
 CONFIGURATIONS = {
     # --- 1. INITIALISATION COMBINATIONS (2^4 - 1 = 15 cases) ---
     # 4 Actives (Full)
-    "Init: All (Ref)": [],
+    # "Init: All (Ref)": [],
 
-    # 3 Actives (1 Disabled)
-    "Init: No SVD": ["--no-svd"],
+    # # 3 Actives (1 Disabled)
+    # "Init: No SVD": ["--no-svd"],
     "Init: No KMeans": ["--no-kmeans"],
-    "Init: No NMF": ["--no-nmf"],
+    # "Init: No NMF": ["--no-nmf"],
     "Init: No Greedy": ["--no-greedy"],
 
     # 2 Actives (2 Disabled)
     "Init: SVD + KMeans": ["--no-nmf", "--no-greedy"],
-    "Init: SVD + NMF": ["--no-kmeans", "--no-greedy"],
-    "Init: SVD + Greedy": ["--no-kmeans", "--no-nmf"],
-    "Init: KMeans + NMF": ["--no-svd", "--no-greedy"],
-    "Init: KMeans + Greedy": ["--no-svd", "--no-nmf"],
-    "Init: NMF + Greedy": ["--no-svd", "--no-kmeans"],
+    # "Init: SVD + NMF": ["--no-kmeans", "--no-greedy"],
+    # "Init: SVD + Greedy": ["--no-kmeans", "--no-nmf"],
+    # "Init: KMeans + NMF": ["--no-svd", "--no-greedy"],
+    # "Init: KMeans + Greedy": ["--no-svd", "--no-nmf"],
+    # "Init: NMF + Greedy": ["--no-svd", "--no-kmeans"],
 
     # 1 Active (3 Disabled)
-    "Init: Only SVD": ["--no-kmeans", "--no-nmf", "--no-greedy"],
-    "Init: Only KMeans": ["--no-svd", "--no-nmf", "--no-greedy"],
-    "Init: Only NMF": ["--no-svd", "--no-kmeans", "--no-greedy"],
-    "Init: Only Greedy": ["--no-svd", "--no-kmeans", "--no-nmf"],
+    # "Init: Only SVD": ["--no-kmeans", "--no-nmf", "--no-greedy"],
+    # "Init: Only KMeans": ["--no-svd", "--no-nmf", "--no-greedy"],
+    # "Init: Only NMF": ["--no-svd", "--no-kmeans", "--no-greedy"],
+    # "Init: Only Greedy": ["--no-svd", "--no-kmeans", "--no-nmf"],
 
-    # --- 2. OTHER ABLATIONS & PARAMETERS ---
-    "Param: No Transpose": ["--no-transpose"],
+    # # --- 2. OTHER ABLATIONS & PARAMETERS ---
+    # "Param: No Transpose": ["--no-transpose"],
     
-    # Restart Strategies
-    "Restart: Simple": ["--restart-mode", "SIMPLE"],
+    # # Restart Strategies
+    # "Restart: Simple": ["--restart-mode", "SIMPLE"],
     
-    # Crossover Strategies
-    "Cross: Mean": ["--crossover", "MEAN"],
-    "Cross: Uniform": ["--crossover", "UNIFORM"],
+    # # Crossover Strategies
+    # "Cross: Mean": ["--crossover", "MEAN"],
+    # "Cross: Uniform": ["--crossover", "UNIFORM"],
     
-    # Mutation Strategies
-    "Mut: Swap": ["--mutation-type", "SWAP"],
-    "Mut: Greedy": ["--mutation-type", "GREEDY"],
-    "Mut: Noise": ["--mutation-type", "NOISE"]
+    # # Mutation Strategies
+    # "Mut: Swap": ["--mutation-type", "SWAP"],
+    # "Mut: Greedy": ["--mutation-type", "GREEDY"],
+    # "Mut: Noise": ["--mutation-type", "NOISE"]
 }
+
 # ==============================================================
 
 def ensure_dir(directory):
@@ -88,6 +74,7 @@ def ensure_dir(directory):
         os.makedirs(directory)
 
 def get_score_from_file(filepath):
+    """Lit le score (erreur) depuis le fichier de sortie du solver."""
     try:
         with open(filepath, 'r') as f:
             line = f.readline().strip()
@@ -96,58 +83,57 @@ def get_score_from_file(filepath):
     except Exception:
         return float('inf')
 
-def run_single_benchmark(scenario):
-    scen_name = scenario["name"]
-    input_file = scenario["input_file"]
-    mode = scenario["mode"]
-    csv_filename = scenario["csv_name"]
-    
-    print(f"\n{'='*60}")
-    print(f"LANCEMENT DU SCÉNARIO : {scen_name}")
-    print(f"Mode          : {mode}")
-    print(f"Fichier Input : {os.path.basename(input_file)}")
-    print(f"Output CSV    : {csv_filename}")
-    print(f"{'='*60}\n")
+def get_imf_datasets():
+    """Récupère tous les fichiers .txt dans data/imf_matrix"""
+    pattern = os.path.join(IMF_DATA_DIR, "*.txt")
+    files = glob.glob(pattern)
+    files.sort() # Tri pour ordre constant
+    return files
 
-    if not os.path.exists(input_file):
-        print(f"ERREUR: Input introuvable. Skip.")
+def run_global_benchmark():
+    datasets = get_imf_datasets()
+    
+    if not datasets:
+        print(f"ERREUR: Aucun fichier .txt trouvé dans {IMF_DATA_DIR}")
         return
 
-    output_dir_temp = os.path.join(PROJECT_ROOT, "results", "benchmark_temp", mode)
-    ensure_dir(output_dir_temp)
-    result_csv_path = os.path.join(PROJECT_ROOT, "results", csv_filename)
+    print(f"\n{'='*60}")
+    print(f"BENCHMARK GLOBAL IMF")
+    print(f"Datasets trouvés ({len(datasets)}) :")
+    for d in datasets:
+        print(f"  - {os.path.basename(d)}")
+    print(f"{'='*60}\n")
 
-    # --- 1. DÉTECTION DE LA REPRISE (RESUME) ---
+    result_csv_path = os.path.join(OUTPUT_BASE_DIR, CSV_FILENAME)
+    temp_output_dir = os.path.join(OUTPUT_BASE_DIR, "benchmark_temp")
+    ensure_dir(temp_output_dir)
+
+    # --- Gestion reprise (Resume) ---
     processed_configs = set()
     file_exists = os.path.exists(result_csv_path)
 
     if file_exists:
-        print(f"-> Fichier existant détecté. Lecture des configs déjà faites...")
         try:
             with open(result_csv_path, 'r') as f:
                 reader = csv.reader(f, delimiter=';')
                 for row in reader:
                     if row: processed_configs.add(row[0]) 
-        except Exception as e:
-            print(f"-> Erreur lecture CSV ({e}). On repart de zéro.")
+        except Exception:
             processed_configs = set()
 
-    # --- 2. OUVERTURE EN MODE APPEND ('a') ---
     open_mode = 'a' if file_exists else 'w'
     
     # Header Console
-    header_console = f"{'CONFIGURATION':<25} | {'MOYENNE':<10} | {'MEILLEUR':<10} | {'PIRE':<10} | {'STD DEV':<10}"
+    header_console = f"{'CONFIGURATION':<25} | {'SCORE TOTAL':<12} | {'MOYENNE':<10} | {'STD DEV':<10}"
     print("-" * len(header_console))
     print(header_console)
     print("-" * len(header_console))
 
-    # On ouvre le fichier et on le garde ouvert
     with open(result_csv_path, mode=open_mode, newline='') as csv_file:
         writer = csv.writer(csv_file, delimiter=';')
 
-        # Si nouveau fichier, on écrit l'en-tête CSV
         if not file_exists:
-            writer.writerow(["CONFIGURATION", "MOYENNE", "MEILLEUR", "PIRE", "STD DEV"])
+            writer.writerow(["CONFIGURATION", "SCORE_TOTAL_MOYEN", "MEILLEUR_TOTAL", "PIRE_TOTAL", "STD_DEV"])
 
         for config_name, config_args in CONFIGURATIONS.items():
             
@@ -155,55 +141,72 @@ def run_single_benchmark(scenario):
                 print(f"{config_name:<25} | DÉJÀ FAIT (Skip)")
                 continue
 
-            scores = []
-            print(f"Test: {config_name:<19}", end="", flush=True)
+            # Liste pour stocker le Score Total de chaque Seed
+            # seed_total_scores[i] = Somme des scores de tous les fichiers pour la seed i
+            seed_total_scores = [] 
+            
+            print(f"Run: {config_name:<20}", end="", flush=True)
 
             for i, seed in enumerate(SEEDS):
-                temp_output = os.path.join(output_dir_temp, f"out_{i}.txt")
-                if os.path.exists(temp_output): os.remove(temp_output)
+                current_seed_total_score = 0
+                error_occurred = False
 
-                cmd = [
-                    PYTHON_EXEC, SCRIPT_PATH,
-                    "--input", input_file,
-                    "--output", temp_output,
-                    "--rank", str(RANK),
-                    "--time_limit", str(TIME_LIMIT),
-                    "-n", "61",
-                    "-s", "4",
-                    "-m", "0.383",
-                    "--seed", str(seed),
-                    "--factorization-mode", mode
-                ] + config_args
+                # Pour cette seed, on lance le solver sur TOUS les fichiers
+                for input_file in datasets:
+                    temp_output = os.path.join(temp_output_dir, f"out_{i}.txt")
+                    if os.path.exists(temp_output): os.remove(temp_output)
 
-                try:
-                    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-                    scores.append(get_score_from_file(temp_output))
-                    print(".", end="", flush=True)
-                except:
-                    print("E", end="", flush=True)
-                    scores.append(float('inf'))
+                    cmd = [
+                        PYTHON_EXEC, SCRIPT_PATH,
+                        "--input", input_file,
+                        "--output", temp_output,
+                        "--rank", str(RANK),
+                        "--time_limit", str(TIME_LIMIT),
+                        "-n", "61",
+                        "-s", "8",
+                        "-m", "0.383",
+                        "--seed", str(seed),
+                        "--factorization-mode", "IMF" # Forcé en IMF
+                    ] + config_args
 
-            valid_scores = [s for s in scores if s != float('inf')]
-            
-            if valid_scores:
-                avg = statistics.mean(valid_scores)
-                best = min(valid_scores)
-                worst = max(valid_scores)
-                std = statistics.stdev(valid_scores) if len(valid_scores) > 1 else 0.0
+                    try:
+                        # Capture output to avoid spamming console
+                        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                        score = get_score_from_file(temp_output)
+                        
+                        if score == float('inf'):
+                            error_occurred = True
+                            break
+                        
+                        current_seed_total_score += score
+
+                    except Exception:
+                        error_occurred = True
+                        break
                 
-                print(f"\r{config_name:<25} | {avg:<10.2f} | {best:<10.0f} | {worst:<10.0f} | {std:<10.2f}")
-                writer.writerow([config_name, f"{avg:.2f}", int(best), int(worst), f"{std:.2f}"])
+                if not error_occurred:
+                    seed_total_scores.append(current_seed_total_score)
+                    print(".", end="", flush=True)
+                else:
+                    seed_total_scores.append(float('inf'))
+                    print("E", end="", flush=True)
+
+            # Analyse des résultats agrégés
+            valid_totals = [s for s in seed_total_scores if s != float('inf')]
+            
+            if valid_totals:
+                avg_total = statistics.mean(valid_totals)
+                best_total = min(valid_totals)
+                worst_total = max(valid_totals)
+                std_dev = statistics.stdev(valid_totals) if len(valid_totals) > 1 else 0.0
+                
+                print(f"\r{config_name:<25} | {avg_total:<12.0f} | {avg_total:<10.0f} | {std_dev:<10.2f}")
+                writer.writerow([config_name, f"{avg_total:.2f}", int(best_total), int(worst_total), f"{std_dev:.2f}"])
             else:
-                print(f"\r{config_name:<25} | {'FAIL':<10} | {'-':<10} | {'-':<10} | {'-':<10}")
+                print(f"\r{config_name:<25} | {'FAIL':<12} | - | -")
                 writer.writerow([config_name, "FAIL", "-", "-", "-"])
             
-            # --- SAUVEGARDE IMMÉDIATE ---
-            csv_file.flush() # Force l'écriture sur le disque dur immédiatement
+            csv_file.flush()
 
 if __name__ == "__main__":
-    if not os.path.exists(SCRIPT_PATH):
-        print(f"ERREUR: main.py introuvable à {SCRIPT_PATH}")
-    else:
-        # Boucle sur tous les scénarios définis
-        for scenario in SCENARIOS:
-            run_single_benchmark(scenario)
+    run_global_benchmark()
