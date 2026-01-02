@@ -50,9 +50,11 @@ class ConfigAblation:
 
         conf.allow_transpose = True
 
-        conf.restart_mode = "FULL"
+        conf.restart_mode = "SIMPLE"
 
         conf.crossover_type = "UNIFORM"
+        
+        conf.mutation_type = "GREEDY"
 
         return conf
 
@@ -65,12 +67,15 @@ class ConfigAblation:
 
         conf.use_greedy = False
         conf.use_kmeans = False
+        conf.use_nmf = False
 
-        conf.allow_transpose = True
+        conf.allow_transpose = False
 
         conf.restart_mode = "FULL"
 
-        conf.crossover_type = "BOTH"
+        conf.crossover_type = "MEAN"
+
+        conf.mutation_type = "SWAP"
 
         return conf
 

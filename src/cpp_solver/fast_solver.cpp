@@ -40,7 +40,7 @@ int count_diff(const MatrixXi& A, const MatrixXi& B) {
 
 // --- OPTIMISATION LOCALE ---
 
-// --- 1. SOLVE IMF (Arrondi simple) ---
+// --- 1. SOLVE IMF ---
 
 double solve_matrix_imf(const MatrixXd& Target, const MatrixXd& Base, MatrixXi& Result, int L_res, int U_res, int effort) {
     int n_cols = Target.cols();
