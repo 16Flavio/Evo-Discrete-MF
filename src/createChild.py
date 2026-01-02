@@ -42,6 +42,8 @@ def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH,
             mutation_mode_int = 2
         elif config and config.mutation_type == "NOISE":
             mutation_mode_int = 3
+        elif config and config.mutation_type == "NONE":
+            mutation_mode_int = 4
 
         mode_opti = ""
         if config and config.factorization_mode == "IMF":

@@ -27,6 +27,7 @@ class ConfigAblation:
         # "GREEDY" = Mutation gloutonne
         # "NOISE" = Ajout de bruit gaussien
         # "ALL" = Utilisation de toutes les stratégies de mutation
+        # "NONE" = Aucune mutation
         self.mutation_type = "SWAP"
 
         # --- MODE ---
@@ -37,6 +38,41 @@ class ConfigAblation:
 
         # --- AFFICHAGE ---
         self.debug_mode = False  # Si True, affiche des informations de debug supplémentaires
+
+    @classmethod
+    def get_BMF_optimal(cls):
+        """Retourne la configuration optimale pour la Factorisation Binaire"""
+        conf = cls()
+
+        conf.factorization_mode = "BMF"
+        
+        conf.use_greedy = False
+
+        conf.allow_transpose = True
+
+        conf.restart_mode = "FULL"
+
+        conf.crossover_type = "UNIFORM"
+
+        return conf
+
+    @classmethod
+    def get_IMF_optimal(cls):
+        """Retourne la configuration optimale pour la Factorisation Entière"""
+        conf = cls()
+
+        conf.factorization_mode = "IMF"
+
+        conf.use_greedy = False
+        conf.use_kmeans = False
+
+        conf.allow_transpose = True
+
+        conf.restart_mode = "FULL"
+
+        conf.crossover_type = "BOTH"
+
+        return conf
 
     def __str__(self):
         return (f"Config(SVD={self.use_svd}, KMEANS={self.use_kmeans}, NMF={self.use_nmf}, GREEDY={self.use_greedy}, "

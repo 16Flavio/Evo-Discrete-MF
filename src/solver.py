@@ -295,7 +295,15 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     last_improvement_time = time.time()
     restart_count = 0 
     
-    current_phase = 'DIRECT' 
+    if not config.allow_transpose:
+        if m*r < n*r:
+            current_phase = 'DIRECT'
+        else:
+            current_phase = 'TRANSPOSE'
+            population = transpose_population(population)
+    else:
+        current_phase = 'DIRECT'
+
     iters_in_phase = 0
     
     curr_mut = mutation_rate

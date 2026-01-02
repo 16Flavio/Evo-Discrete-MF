@@ -47,7 +47,7 @@ def main():
     parser.add_argument("--no-transpose", action="store_true", help="Désactiver le changement de phase (Transpose)")
     
     parser.add_argument("--debug-mode", action="store_true", help="Activer le mode debug pour plus d'infos")
-    parser.add_argument("--mutation-type", type=str, choices=['SWAP', 'GREEDY', 'NOISE', 'ALL'], default='ALL',
+    parser.add_argument("--mutation-type", type=str, choices=['SWAP', 'GREEDY', 'NOISE', 'ALL', 'NONE'], default='ALL',
                         help="Type de mutation à utiliser")
     parser.add_argument("--factorization-mode", type=str, choices=['IMF', 'BMF', 'RELU'], default='IMF',    
                         help="Mode de factorisation : IMF (entière), BMF (binaire), RELU (avec ReLU)")
@@ -65,6 +65,13 @@ def main():
 
     # 2. Configuration
     config = ConfigAblation()
+    config.factorization_mode = args.factorization_mode
+
+    if args.factorization_mode == "BMF":
+        config = ConfigAblation.get_BMF_optimal()
+    elif args.factorization_mode == "IMF":
+        config = ConfigAblation.get_IMF_optimal()
+
     if args.no_svd: config.use_svd = False
     if args.no_kmeans: config.use_kmeans = False
     if args.no_nmf: config.use_nmf = False
@@ -75,7 +82,6 @@ def main():
     if args.no_transpose: config.allow_transpose = False
     if args.debug_mode: config.debug_mode = True
     config.mutation_type = args.mutation_type
-    config.factorization_mode = args.factorization_mode
     
     print(f"\n=== Lancement Evo-Discrete-MF ===")
     print(f"Input: {args.input}")
