@@ -9,7 +9,7 @@ try:
     from .fast_solver import get_aligned_distance
     USE_CPP_DIST = True
 except ImportError:
-    print("Warning: Module C++ non trouvé. Veuillez compiler avec setup.py.")
+    print("Warning: Module C++ non trouvé. Veuillez compiler avec setup.py. (get_aligned_distance)")
     USE_CPP_DIST = False
 
 # --- UTILS ---
@@ -276,6 +276,9 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     population.sort(key=lambda x: x[0])
     if not population: return np.zeros((m,r)), np.zeros((r,n)), float('inf')
 
+    if config.debug_mode:
+        print(f"[DEBUG] Initial Population Generated: {len(population)} individuals.")
+
     # Init Global Best
     best_f = population[0][0]
     best_W, best_H = population[0][1]
@@ -316,9 +319,15 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     base_restart_threshold = max(10.0, min(60.0, TIME_LIMIT * 0.15))
     restart_threshold = base_restart_threshold
     
+    if config.debug_mode:
+        print(f"[DEBUG] Starting Metaheuristic with Phase: {current_phase}, Initial Best Fitness: {best_f:.6f}")
+
     # --- 2. BOUCLE PRINCIPALE ---
     while time.time() - start_time < TIME_LIMIT - 5:
         current_time = time.time()
+
+        if config.debug_mode and iteration % 50 == 0:
+            print(f"[DEBUG] Iteration {iteration}, Best Fitness: {best_f:.6f}, Population Size: {len(population)}, Phase: {current_phase}")
         
         # A. Changement de Phase
         switch_triggered = False

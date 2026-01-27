@@ -6,7 +6,7 @@ try:
     from .fast_solver import align_parents_cpp, generate_children_batch
     USE_CPP_BATCH = True
 except ImportError:
-    print("Warning: Module C++ non trouvé. Veuillez compiler avec setup.py.")
+    print("Warning: Module C++ non trouvé. Veuillez compiler avec setup.py. (align_parents_cpp, generate_children_batch)")
     USE_CPP_BATCH = False
 
 def align_parents(W1, W2):

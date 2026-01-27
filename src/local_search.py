@@ -4,7 +4,7 @@ try:
     from .fast_solver import optimize_h, optimize_alternating
     USE_CPP = True
 except ImportError:
-    print("Warning: Module C++ non trouvé. Veuillez compiler avec setup.py.")
+    print("Warning: Module C++ non trouvé. Veuillez compiler avec setup.py. (optimize_h, optimize_alternating)")
     USE_CPP = False
 
 def optimize_alternating_wrapper(X, W_init, H_init, LW, UW, LH, UH, config=None, max_iters=10, effort=1, time_limit=3600.0):

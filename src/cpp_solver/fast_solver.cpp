@@ -33,6 +33,45 @@ struct TabuState {
     void clear() { fill(list.begin(), list.end(), 0); }
 };
 
+void bnb_recursive(
+    int k, 
+    int r, 
+    double current_partial_error, 
+    const MatrixXd& R, 
+    const VectorXd& z, 
+    const vector<vector<int>>& candidates,
+    VectorXi& current_h, 
+    VectorXi& best_h, 
+    double& best_score) 
+{
+    /**
+     * Recursively explores the 2^r integer combinations using the 
+     * triangular structure of the Cholesky decomposition to prune branches.
+     */
+    if (k < 0) {
+        if (current_partial_error < best_score) {
+            best_score = current_partial_error;
+            best_h = current_h;
+        }
+        return;
+    }
+
+    for (int cand : candidates[k]) {
+        current_h(k) = cand;
+
+        double val = 0.0;
+        for (int j = k; j < r; ++j) {
+            val += R(k, j) * (double)current_h(j);
+        }
+        double diff = val - z(k);
+        double new_error = current_partial_error + (diff * diff);
+
+        if (new_error < best_score) {
+            bnb_recursive(k - 1, r, new_error, R, z, candidates, current_h, best_h, best_score);
+        }
+    }
+}
+
 // Counts the number of differences (Hamming Distance) between two matrices
 int count_diff(const MatrixXi& A, const MatrixXi& B) {
     return (int)(A - B).cwiseAbs().cast<bool>().count();
@@ -42,169 +81,73 @@ int count_diff(const MatrixXi& A, const MatrixXi& B) {
 
 // --- 1. SOLVE IMF ---
 
-double solve_matrix_imf(const MatrixXd& Target, const MatrixXd& Base, MatrixXi& Result, int L_res, int U_res, int effort) {
-    int n_cols = Target.cols();
-    int r = Base.cols();
-    
-    // Pré-calcul de la matrice de Gram (O(r^2))
-    MatrixXd M = Base.transpose() * Base;
-    M += MatrixXd::Identity(r, r) * 1e-9; // Régularisation
-    MatrixXd V = Base.transpose() * Target;
-    VectorXd M_diag = M.diagonal();
+double solve_column_imf_bnb(const MatrixXd& WtW, const VectorXd& Wtx, VectorXi& current_vec, double LH, double UH, double col_norm_sq) {
+    /**
+     * Finds the best integer vector h in the 2^r box around the real solution 
+     * using a Branch and Bound approach. Returns the column error.
+     */
+    int r = (int)WtW.rows();
 
-    // Solution continue initiale (LDLT) - Aide à guider le démarrage
-    auto solver_small = M.ldlt();
-    MatrixXd Float_Init = solver_small.solve(V);
+    LLT<MatrixXd> llt(WtW);
+    if (llt.info() != Eigen::Success) {
+        return col_norm_sq;
+    }
+    MatrixXd R = llt.matrixU(); 
+    VectorXd z = llt.matrixL().solve(Wtx);
+    VectorXd h_real = llt.solve(Wtx);
 
-    double total_final_error = 0.0;
-    
-    // Détection si déjà dans une région parallèle
-    bool in_parallel = omp_in_parallel();
+    vector<vector<int>> candidates(r);
+    for (int i = 0; i < r; ++i) {
+        int f = (int)std::floor(h_real(i));
+        int c = (int)std::ceil(h_real(i));
+        int cf = (int)std::max(LH, std::min(UH, (double)f));
+        int cc = (int)std::max(LH, std::min(UH, (double)c));
 
-    #pragma omp parallel for schedule(dynamic, 8) reduction(+:total_final_error) if(!in_parallel)
-    for (int j = 0; j < n_cols; ++j) {
-        // Thread-local RNG
-        mt19937 rng(12345 ^ (omp_get_thread_num() + 1) ^ j); 
-        uniform_int_distribution<int> dist_r(0, r - 1);
-        uniform_int_distribution<int> dist_4(0, 3);
-
-        VectorXi current_vec = Result.col(j);
-        
-        // Initialisation si vide ou si effort élevé (pour sortir des minimums)
-        if (current_vec.isZero()) {
-            for (int k = 0; k < r; ++k) {
-                int val = round(Float_Init(k, j));
-                current_vec(k) = max(L_res, min(U_res, val));
+        candidates[i].push_back(cf);
+        if (cc != cf) {
+            if (std::abs((double)cc - h_real(i)) < std::abs((double)cf - h_real(i))) {
+                candidates[i].insert(candidates[i].begin(), cc);
+            } else {
+                candidates[i].push_back(cc);
             }
         }
-
-        VectorXd gradient = (M * current_vec.cast<double>()) - V.col(j);
-        VectorXi best_local_vec = current_vec;
-        double current_obj_val = 0.0; // Delta score
-
-        // Configuration Effort
-        // 1=Light (Enfants), 2=Deep (Init/PR), 3=Ultra (Final)
-        int max_restarts = (effort == 3) ? 4 : ((effort == 2) ? 2 : 0); // Increased restarts for effort 2
-        int max_iter_per_run = (effort == 1) ? 35 : ((effort == 2) ? 200 : 400); // Increased iter for effort 2
-        bool use_tabu = (effort > 0);
-
-        if (use_tabu) {
-            int tabu_tenure = max(3, r / 3);
-            TabuState tabu(r, tabu_tenure);
-
-            for (int restart = 0; restart <= max_restarts; ++restart) {
-                int stagnation = 0;
-
-                // --- SMART KICK (Restart Stratégique) ---
-                if (restart > 0) {
-                    current_vec = best_local_vec;
-                    gradient = (M * current_vec.cast<double>()) - V.col(j);
-                    
-                    // On perturbe les indices à fort gradient
-                    int n_perturb = max(1, r / 6);
-                    for(int p=0; p<n_perturb; ++p) {
-                        int k = -1;
-                        double max_g = -1.0;
-                        // Tournoi pour trouver une variable tendue
-                        for(int t=0; t<3; ++t) {
-                            int cand = dist_r(rng);
-                            if (abs(gradient(cand)) > max_g) { max_g = abs(gradient(cand)); k=cand; }
-                        }
-                        
-                        if (k != -1) {
-                            // Shift dans la direction opposée au gradient
-                            int shift = (gradient(k) > 0) ? -2 : 2;
-                            if (dist_4(rng) == 0) shift = -shift; // Un peu de bruit
-                            
-                            int new_val = max(L_res, min(U_res, current_vec(k) + shift));
-                            int step = new_val - current_vec(k);
-                            if(step != 0) {
-                                current_vec(k) = new_val;
-                                gradient += step * M.col(k);
-                            }
-                        }
-                    }
-                    tabu.clear();
-                }
-
-                double best_run_val = 1e20;
-
-                for (int iter = 0; iter < max_iter_per_run; ++iter) {
-                    int best_k = -1; int best_step = 0; double best_delta = 1e20;
-                    bool move_found = false;
-
-                    for (int k = 0; k < r; ++k) {
-                        double grad_k = gradient(k);
-                        double m_kk = M_diag(k);
-                        // Pas de Newton
-                        double ideal_step = -grad_k / (m_kk + 1e-12);
-                        
-                        int cv = current_vec(k);
-                        int c1 = floor(cv + ideal_step);
-                        int c2 = ceil(cv + ideal_step);
-                        int candidates[2] = {c1, c2};
-
-                        for(int target : candidates) {
-                            if(target < L_res) target = L_res;
-                            if(target > U_res) target = U_res;
-                            int step = target - cv;
-                            if(step == 0) continue;
-
-                            double delta = (step * step * m_kk) + (2 * step * grad_k);
-                            
-                            bool aspiration = (delta < -0.01 && (current_obj_val + delta < best_run_val));
-                            if(aspiration || !tabu.is_tabu(k, iter)) {
-                                if(delta < best_delta) {
-                                    best_delta = delta; best_k = k; best_step = step; move_found = true;
-                                }
-                            }
-                        }
-                    }
-
-                    if(move_found) {
-                        current_vec(best_k) += best_step;
-                        gradient += best_step * M.col(best_k);
-                        current_obj_val += best_delta;
-                        tabu.make_tabu(best_k, iter, rng);
-
-                        if(current_obj_val < best_run_val) {
-                            best_run_val = current_obj_val;
-                            best_local_vec = current_vec;
-                            stagnation = 0;
-                        } else stagnation++;
-                    } else break;
-
-                    if(stagnation > (effort==1 ? 8 : 25)) break;
-                }
-            }
-            current_vec = best_local_vec;
-        } else {
-            // Fallback Greedy (Effort 0)
-             for (int iter = 0; iter < 10; ++iter) {
-                int best_k = -1; int best_step = 0; double best_delta = -1e-9;
-                bool improved = false;
-                for (int k = 0; k < r; ++k) {
-                     double delta_base = -gradient(k) / (M_diag(k) + 1e-12);
-                     int target = round(current_vec(k) + delta_base);
-                     target = max(L_res, min(U_res, target));
-                     int step = target - current_vec(k);
-                     if(step == 0) continue;
-                     double delta = (step * step * M_diag(k)) + (2 * step * gradient(k));
-                     if (delta < best_delta) { best_delta = delta; best_k = k; best_step = step; improved = true; }
-                }
-                if(improved) {
-                    current_vec(best_k) += best_step;
-                    gradient += best_step * M.col(best_k);
-                } else break;
-             }
-        }
-
-        Result.col(j) = current_vec;
-        VectorXd final_res = Target.col(j) - Base * current_vec.cast<double>();
-        total_final_error += final_res.squaredNorm();
     }
 
-    return total_final_error;
+    VectorXi best_h = current_vec;
+    double best_dist_sq = std::numeric_limits<double>::max();
+    
+    VectorXi simple_round(r);
+    for(int i=0; i<r; ++i) {
+        simple_round(i) = (int)std::max(LH, std::min(UH, std::round(h_real(i))));
+    }
+    best_dist_sq = (R * simple_round.cast<double>() - z).squaredNorm();
+    best_h = simple_round;
+
+    VectorXi temp_h = VectorXi::Zero(r);
+    bnb_recursive(r - 1, r, 0.0, R, z, candidates, temp_h, best_h, best_dist_sq);
+
+    current_vec = best_h;
+
+    return std::max(0.0, col_norm_sq - z.squaredNorm() + best_dist_sq);
+}
+
+double solve_matrix_imf(const MatrixXd& X, const MatrixXd& W, MatrixXi& H, double LH, double UH) {
+    /**
+     * Solves for H given a fixed real-valued W. Returns the total squared error.
+     */
+    MatrixXd WtW = W.transpose() * W;
+    MatrixXd WtX = W.transpose() * X;
+    int m = (int)X.cols();
+    double total_error = 0.0;
+
+    #pragma omp parallel for reduction(+:total_error)
+    for (int j = 0; j < m; ++j) {
+        VectorXi h_col = H.col(j);
+        double col_err = solve_column_imf_bnb(WtW, WtX.col(j), h_col, LH, UH, X.col(j).squaredNorm());
+        H.col(j) = h_col;
+        total_error += col_err;
+    }
+    return total_error;
 }
 
 // --- 2. SOLVE BMF (Optimized Boolean: 1+1=1) ---
@@ -639,7 +582,7 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
                 
                 if(mode_opti == "IMF") {
                     MatrixXd W_float = W.cast<double>();
-                    f_obj = solve_matrix_imf(X, W_float, Child_H, LH, UH, 1);
+                    f_obj = solve_matrix_imf(X, W_float, Child_H, LH, UH);
                 } else if(mode_opti == "BMF") {
                     f_obj = solve_matrix_bmf(X, W, Child_H, LH, UH);
                 } else if(mode_opti == "RELU") {
@@ -655,7 +598,7 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
                 
                 if(mode_opti == "IMF") {
                     MatrixXd HT_float = HT.cast<double>();
-                    f_w = solve_matrix_imf(XT, HT_float, WT, LW, UW, 1);
+                    f_w = solve_matrix_imf(XT, HT_float, WT, LW, UW);
                 } else if(mode_opti == "BMF") {
                     f_w = solve_matrix_bmf(XT, HT, WT, LW, UW);
                 } else if(mode_opti == "RELU") {
@@ -700,7 +643,7 @@ tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
         // Step 1: Optimize H
         MatrixXd W_float = W.cast<double>();
         if(mode_opti == "IMF") {
-            f_obj = solve_matrix_imf(X, W_float, H, LH, UH, effort);
+            f_obj = solve_matrix_imf(X, W_float, H, LH, UH);
         }else if(mode_opti == "BMF") {
             f_obj = solve_matrix_bmf(X, W, H, LH, UH);
         }else if(mode_opti == "RELU") {
@@ -715,7 +658,7 @@ tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
         
         double f_w = f_obj;
         if(mode_opti == "IMF") {
-            f_w = solve_matrix_imf(XT, HT, WT, LW, UW, effort);
+            f_w = solve_matrix_imf(XT, HT, WT, LW, UW);
         }else if(mode_opti == "BMF") {
             f_w = solve_matrix_bmf(XT, HT_int, WT, LW, UW);
         }else if(mode_opti == "RELU") {
@@ -734,7 +677,7 @@ pair<MatrixXi, double> optimize_h_cpp(MatrixXd X, MatrixXd W, int LW, int UW, in
     double f = 1e20;
     MatrixXi W_int = W.cast<int>();
     if (mode_opti == "IMF") {
-        f = solve_matrix_imf(X, W, H, LH, UH, 3);
+        f = solve_matrix_imf(X, W, H, LH, UH);
     }else if (mode_opti == "BMF") {
         f = solve_matrix_bmf(X, W_int, H, LH, UH);
     }else if (mode_opti == "RELU") {
