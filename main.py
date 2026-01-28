@@ -121,7 +121,10 @@ def main():
         f_check = fobj(X, W, H)
     print(f"Fitness Solver: {f_val}")
     print(f"Fitness Check : {f_check}")
-    
+
+    print(f"W = {W}")
+    print(f"H = {H}")
+
     if f_val != f_check:
         print("/!\\ ATTENTION: Divergence entre solver et vérification /!\\")
 

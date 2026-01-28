@@ -1,7 +1,7 @@
 import time
 import numpy as np
 
-from .local_search import optimize_alternating_wrapper
+from .local_search import optimize_alternating_wrapper, optimizeHforW
 from .createChild import generateNewGeneration, align_parents
 from .init_pop import generate_population_W, perturb_W, generate_antithetic_W, perturb_W_destructive
 
@@ -163,7 +163,7 @@ def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashe
         W_ruined = ruin_and_recreate(ref_W, G_L, G_U, ruin_percent=0.15)
         H_rand = np.random.randint(P_L, P_U + 1, size=(r, n))
         W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f_gen, W_ruined, H_rand, G_L, G_U, P_L, P_U, max_iters=40, effort=2
+            X_f_gen, W_ruined, H_rand, G_L, G_U, P_L, P_U, max_iters=40
         )
         new_population.append([f, (W_opt, H_opt)])
         sigma = range_val * 0.30
@@ -176,7 +176,7 @@ def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashe
         W_anti = generate_antithetic_W(target_W, G_L, G_U)
         H_rand = np.random.randint(P_L, P_U + 1, size=(r, n))
         W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f_gen, W_anti, H_rand, G_L, G_U, P_L, P_U, max_iters=20, effort=1
+            X_f_gen, W_anti, H_rand, G_L, G_U, P_L, P_U, max_iters=20
         )
         new_population.append([f, (W_opt, H_opt)])
         sigma = range_val * 0.80 
@@ -191,7 +191,7 @@ def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashe
         if len(new_population) >= N: break
         H_rand = np.random.randint(P_L, P_U + 1, size=(r, n))
         W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f_gen, W_cand, H_rand, G_L, G_U, P_L, P_U, config=config, max_iters=15, effort=1
+            X_f_gen, W_cand, H_rand, G_L, G_U, P_L, P_U, config=config, max_iters=15
         )
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
         if child_hash not in seen_hashes:
@@ -218,7 +218,7 @@ def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashe
 
         H_rand = np.random.randint(P_L, P_U + 1, size=(r, n))
         W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f_gen, W_mut, H_rand, G_L, G_U, P_L, P_U, config=config, max_iters=10, effort=1
+            X_f_gen, W_mut, H_rand, G_L, G_U, P_L, P_U, config=config, max_iters=10
         )
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
         if child_hash not in seen_hashes:
@@ -259,15 +259,17 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     # --- 1. INITIALISATION ---
     pop_W_list = generate_population_W(X, r, N, LW, UW, LH, UH, config=config, verbose=False)
     
-    for i, W_cand in enumerate(pop_W_list):
+    for i, W_opt in enumerate(pop_W_list):
         if time.time() - start_time > TIME_LIMIT - 5: break
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
         iters = 25 if i < (N // 5) else 10
-        eff = 2 if i < (N // 5) else 1
         
-        W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f, W_cand, H_rand, LW, UW, LH, UH, config=config, max_iters=iters, effort=eff
-        )
+        H_opt, f = optimizeHforW(X_f, W_opt, H_rand, LW, UW, LH, UH, config=config)
+
+        # W_opt, H_opt, f = optimize_alternating_wrapper(
+        #     X_f, W_cand, H_rand, LW, UW, LH, UH, config=config, max_iters=iters
+        # )
+
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
         if child_hash not in seen_hashes:
             seen_hashes.add(child_hash)
@@ -403,7 +405,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 # Intensification
                 W_c, H_c = current_best[1]
                 W_boost, H_boost, f_boost = optimize_alternating_wrapper(
-                    active_X.astype(float), W_c, H_c, G_L, G_U, P_L, P_U, config=config, max_iters=100, effort=3
+                    active_X.astype(float), W_c, H_c, G_L, G_U, P_L, P_U, config=config, max_iters=100
                 )
                 if f_boost < best_f:
                      best_f = f_boost
@@ -464,10 +466,10 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
 
     if remaining > 1.0:
         final_W, final_H, final_f = optimize_alternating_wrapper(
-            X_f, final_W, final_H, LW, UW, LH, UH, config=config, max_iters=2000, effort=3, time_limit=remaining
+            X_f, final_W, final_H, LW, UW, LH, UH, config=config, max_iters=2000, time_limit=remaining
         )
     
     if final_f < global_best_f:
         global_best_W, global_best_H, global_best_f = final_W, final_H, final_f
 
-    return global_best_W, global_best_H, global_best_f
+    return global_best_W, global_best_H, round(global_best_f)

@@ -7,7 +7,7 @@ except ImportError:
     print("Warning: Module C++ non trouvé. Veuillez compiler avec setup.py. (optimize_h, optimize_alternating)")
     USE_CPP = False
 
-def optimize_alternating_wrapper(X, W_init, H_init, LW, UW, LH, UH, config=None, max_iters=10, effort=1, time_limit=3600.0):
+def optimize_alternating_wrapper(X, W_init, H_init, LW, UW, LH, UH, config=None, max_iters=10, time_limit=3600.0):
     """
     Wrapper for the C++ alternating optimization function.
     Optimizes W and H to minimize ||X - WH||^2.
@@ -25,8 +25,7 @@ def optimize_alternating_wrapper(X, W_init, H_init, LW, UW, LH, UH, config=None,
             W_init.astype(np.int32), 
             H_init.astype(np.int32), 
             int(LW), int(UW), int(LH), int(UH), 
-            int(max_iters), 
-            int(effort),
+            int(max_iters),
             float(time_limit),
             str(mode_opti)
         )
@@ -34,7 +33,7 @@ def optimize_alternating_wrapper(X, W_init, H_init, LW, UW, LH, UH, config=None,
     else:
         return W_init, H_init, float('inf') 
 
-def optimizeHforW(X, W, H_init, LW, UW, LH, UH, config=None, use_vnd=True):
+def optimizeHforW(X, W, H_init, LW, UW, LH, UH, config=None):
     """
     Optimizes H for a fixed W.
     Uses the C++ implementation if available.
@@ -49,7 +48,7 @@ def optimizeHforW(X, W, H_init, LW, UW, LH, UH, config=None, use_vnd=True):
             mode_opti = "RELU"
         X_d = X.astype(float)
         W_d = W.astype(float)
-        H_opt, f = optimize_h(X_d, W_d, int(LW), int(UW), int(LH), int(UH), use_vnd, str(mode_opti))
+        H_opt, f = optimize_h(X_d, W_d, int(LW), int(UW), int(LH), int(UH), str(mode_opti))
         return H_opt, f
     else:
         return H_init, float('inf')

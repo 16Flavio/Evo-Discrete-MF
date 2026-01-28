@@ -81,69 +81,147 @@ int count_diff(const MatrixXi& A, const MatrixXi& B) {
 
 // --- 1. SOLVE IMF ---
 
-double solve_column_imf_bnb(const MatrixXd& WtW, const VectorXd& Wtx, VectorXi& current_vec, double LH, double UH, double col_norm_sq) {
-    /**
-     * Finds the best integer vector h in the 2^r box around the real solution 
-     * using a Branch and Bound approach. Returns the column error.
-     */
+/**
+ * Recherche récursive pour le Sphere Decoding.
+ * Utilise la structure triangulaire de la décomposition de Cholesky R.
+ * Minimise ||z - Rh||^2.
+ */
+void sphere_decoder_recursive(
+    int k, 
+    int r,
+    double current_partial_error,
+    const MatrixXd& R,
+    const VectorXd& z,
+    double LH, double UH,
+    VectorXi& current_h,
+    VectorXi& best_h,
+    double& best_dist_sq,
+    long long& nodes_visited,
+    long long node_limit
+) {
+    if (nodes_visited > node_limit) return;
+    nodes_visited++;
+
+    if (k < 0) {
+        if (current_partial_error < best_dist_sq) {
+            best_dist_sq = current_partial_error;
+            best_h = current_h;
+        }
+        return;
+    }
+
+    // Calcul du centre pour h_k : (z_k - sum_{j=k+1}^{r-1} R_kj * h_j) / R_kk
+    double val_accum = 0.0;
+    for (int j = k + 1; j < r; ++j) {
+        val_accum += R(k, j) * (double)current_h(j);
+    }
+    double center = (z(k) - val_accum) / R(k, k);
+
+    // Énumération de Schnorr-Euchner : on commence par l'entier le plus proche du centre
+    int start_val = (int)std::round(center);
+    start_val = std::max((int)LH, std::min((int)UH, start_val));
+
+    // On explore les candidats dans un ordre alterné (plus proche -> plus loin)
+    // Ex: center=3.2 -> [3, 4, 2, 5, 1...]
+    int step = (center >= (double)start_val) ? 1 : -1;
+    int cand = start_val;
+    bool go_left = (step == -1);
+    
+    // Pour l'alternance
+    int next_step = 1;
+
+    while (cand >= LH && cand <= UH) {
+        current_h(k) = cand;
+        
+        double diff = R(k, k) * (double)cand + val_accum - z(k);
+        double new_error = current_partial_error + (diff * diff);
+
+        // Élagage (Pruning) : si l'erreur partielle dépasse déjà le meilleur score,
+        // on peut arrêter cette branche (et les suivantes car l'erreur est quadratique)
+        if (new_error >= best_dist_sq) {
+            // Dans SE, dès qu'un candidat dépasse la sphère, on n'a plus besoin 
+            // de regarder de ce côté (gauche ou droite).
+            break; 
+        }
+
+        sphere_decoder_recursive(k - 1, r, new_error, R, z, LH, UH, current_h, best_h, best_dist_sq, nodes_visited, node_limit);
+
+        // Prochain candidat dans l'ordre alterné
+        if (next_step % 2 != 0) {
+            cand = start_val + step;
+            if (step > 0) step++; else step--;
+        } else {
+            // On change de direction
+            step = -step;
+            cand = start_val + step;
+            if (step > 0) step++; else step--;
+        }
+        next_step++;
+        
+        if (nodes_visited > node_limit) break;
+    }
+}
+
+/**
+ * solve_column_imf_sphere : Implémentation du Sphere Decoding (CVP entier)
+ */
+double solve_column_imf_sphere(
+    const MatrixXd& WtW, 
+    const VectorXd& Wtx, 
+    VectorXi& current_vec, 
+    double LH, double UH, 
+    double col_norm_sq,
+    long long node_limit = 100000 // Limite pour éviter l'explosion combinatoire sur r=100
+) {
     int r = (int)WtW.rows();
 
+    // 1. Décomposition de Cholesky WtW = R^T * R
     LLT<MatrixXd> llt(WtW);
     if (llt.info() != Eigen::Success) {
-        return col_norm_sq;
+        return col_norm_sq; // Fallback
     }
-    MatrixXd R = llt.matrixU(); 
-    VectorXd z = llt.matrixL().solve(Wtx);
-    VectorXd h_real = llt.solve(Wtx);
-
-    vector<vector<int>> candidates(r);
-    for (int i = 0; i < r; ++i) {
-        int f = (int)std::floor(h_real(i));
-        int c = (int)std::ceil(h_real(i));
-        int cf = (int)std::max(LH, std::min(UH, (double)f));
-        int cc = (int)std::max(LH, std::min(UH, (double)c));
-
-        candidates[i].push_back(cf);
-        if (cc != cf) {
-            if (std::abs((double)cc - h_real(i)) < std::abs((double)cf - h_real(i))) {
-                candidates[i].insert(candidates[i].begin(), cc);
-            } else {
-                candidates[i].push_back(cc);
-            }
-        }
-    }
-
-    VectorXi best_h = current_vec;
-    double best_dist_sq = std::numeric_limits<double>::max();
     
-    VectorXi simple_round(r);
-    for(int i=0; i<r; ++i) {
-        simple_round(i) = (int)std::max(LH, std::min(UH, std::round(h_real(i))));
-    }
-    best_dist_sq = (R * simple_round.cast<double>() - z).squaredNorm();
-    best_h = simple_round;
+    MatrixXd R = llt.matrixU(); 
+    VectorXd z = llt.matrixL().solve(Wtx); 
+    // z est tel que ||Wh - x||^2 = ||Rh - z||^2 + const
 
+    // 2. Initialisation avec le point de Babai (arrondi simple)
+    VectorXd h_real = llt.solve(Wtx);
+    VectorXi best_h(r);
+    for(int i=0; i<r; ++i) {
+        best_h(i) = (int)std::max(LH, std::min(UH, std::round(h_real(i))));
+    }
+    
+    double best_dist_sq = (R * best_h.cast<double>() - z).squaredNorm();
+    
+    // 3. Recherche par Sphere Decoding
     VectorXi temp_h = VectorXi::Zero(r);
-    bnb_recursive(r - 1, r, 0.0, R, z, candidates, temp_h, best_h, best_dist_sq);
+    long long nodes_visited = 0;
+    
+    sphere_decoder_recursive(r - 1, r, 0.0, R, z, LH, UH, temp_h, best_h, best_dist_sq, nodes_visited, node_limit);
 
     current_vec = best_h;
 
+    // Calcul erreur finale : ||x||^2 - ||z||^2 + ||Rh-z||^2
+    // Note: z.squaredNorm() est l'erreur du problème réel non contraint
     return std::max(0.0, col_norm_sq - z.squaredNorm() + best_dist_sq);
 }
 
 double solve_matrix_imf(const MatrixXd& X, const MatrixXd& W, MatrixXi& H, double LH, double UH) {
-    /**
-     * Solves for H given a fixed real-valued W. Returns the total squared error.
-     */
     MatrixXd WtW = W.transpose() * W;
     MatrixXd WtX = W.transpose() * X;
     int m = (int)X.cols();
     double total_error = 0.0;
 
+    // On définit une limite de noeuds pour éviter que l'algorithme ne gèle sur de très grands r
+    // Si r est petit (< 20), le Sphere Decoding trouvera l'optimum exact.
+    // Si r est grand, il agira comme un solveur approché de haute qualité.
+    long long node_limit = 100000; 
+
     #pragma omp parallel for reduction(+:total_error)
     for (int j = 0; j < m; ++j) {
         VectorXi h_col = H.col(j);
-        double col_err = solve_column_imf_bnb(WtW, WtX.col(j), h_col, LH, UH, X.col(j).squaredNorm());
+        double col_err = solve_column_imf_sphere(WtW, WtX.col(j), h_col, LH, UH, X.col(j).squaredNorm(), node_limit);
         H.col(j) = h_col;
         total_error += col_err;
     }
@@ -624,7 +702,7 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
 tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
     MatrixXd X, MatrixXi W_init, MatrixXi H_init, 
     int LW, int UW, int LH, int UH, 
-    int max_global_iters, int effort, double time_limit_seconds, string mode_opti) {
+    int max_global_iters, double time_limit_seconds, string mode_opti) {
 
     auto start_time = chrono::high_resolution_clock::now();
 
@@ -672,7 +750,7 @@ tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
     return make_tuple(W, H, f_obj);
 }
 
-pair<MatrixXi, double> optimize_h_cpp(MatrixXd X, MatrixXd W, int LW, int UW, int LH, int UH, bool use_vnd, string mode_opti) {
+pair<MatrixXi, double> optimize_h_cpp(MatrixXd X, MatrixXd W, int LW, int UW, int LH, int UH, string mode_opti) {
     MatrixXi H = MatrixXi::Zero(W.cols(), X.cols());
     double f = 1e20;
     MatrixXi W_int = W.cast<int>();
@@ -703,7 +781,7 @@ PYBIND11_MODULE(fast_solver, m) {
     m.def("optimize_alternating", &optimize_alternating_cpp, py::call_guard<py::gil_scoped_release>(),
           py::arg("X"), py::arg("W_init"), py::arg("H_init"), 
           py::arg("LW"), py::arg("UW"), py::arg("LH"), py::arg("UH"), 
-          py::arg("max_global_iters"), py::arg("effort"), py::arg("time_limit_seconds") = 3600.0,
+          py::arg("max_global_iters"), py::arg("time_limit_seconds") = 3600.0,
           py::arg("mode_opti") = "IMF"
           );
     m.def("align_parents_cpp", &align_parents_cpp, py::call_guard<py::gil_scoped_release>());
