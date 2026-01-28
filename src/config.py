@@ -69,11 +69,11 @@ class ConfigAblation:
         conf.use_kmeans = False
         conf.use_nmf = False
 
-        conf.allow_transpose = False
+        conf.allow_transpose = True
 
         conf.restart_mode = "FULL"
 
-        conf.crossover_type = "MEAN"
+        conf.crossover_type = "UNIFORM"
 
         conf.mutation_type = "SWAP"
 

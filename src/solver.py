@@ -43,9 +43,11 @@ def select_diverse_survivors(population, N, min_diff_percent=0.001):
     based on a minimum difference percentage.
     """
     population.sort(key=lambda x: x[0])
-    if min_diff_percent <= 0 or not population:
-        return population[:N], len(population)
+    # if min_diff_percent <= 0 or not population:
+    #     return population[:N], len(population)
     
+    return population[:N], len(population)
+
     survivors = []
     survivors.append(population[0]) 
     
@@ -262,7 +264,6 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     for i, W_opt in enumerate(pop_W_list):
         if time.time() - start_time > TIME_LIMIT - 5: break
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
-        iters = 25 if i < (N // 5) else 10
         
         H_opt, f = optimizeHforW(X_f, W_opt, H_rand, LW, UW, LH, UH, config=config)
 
@@ -431,28 +432,28 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
             break
 
         # E. Restart Logique (ADAPTIVE)
-        time_since_last_improv = current_time - last_improvement_time
+        # time_since_last_improv = current_time - last_improvement_time
         
-        if time_since_last_improv > restart_threshold:
-            restart_count += 1
-            restart_threshold = max(5.0, restart_threshold * 0.8)
+        # if time_since_last_improv > restart_threshold:
+        #     restart_count += 1
+        #     restart_threshold = max(5.0, restart_threshold * 0.8)
             
-            population = apply_smart_restart(
-                best_W, best_H, best_f, N, X, LW, UW, LH, UH, 
-                seen_hashes, current_phase, restart_count, population,
-                config=config
-            )
-            best_f = population[0][0]
-            if current_phase == 'DIRECT':
-                best_W, best_H = population[0][1]
-            else:
-                H_T, W_T = population[0][1]
-                best_W, best_H = W_T.T, H_T.T
+        #     population = apply_smart_restart(
+        #         best_W, best_H, best_f, N, X, LW, UW, LH, UH, 
+        #         seen_hashes, current_phase, restart_count, population,
+        #         config=config
+        #     )
+        #     best_f = population[0][0]
+        #     if current_phase == 'DIRECT':
+        #         best_W, best_H = population[0][1]
+        #     else:
+        #         H_T, W_T = population[0][1]
+        #         best_W, best_H = W_T.T, H_T.T
             
-            last_improvement_time = time.time()
-            stagnation_counter = 0
-            curr_mut = mutation_rate; curr_tourn = tournament_size
-            min_diff_percent = 0.005 
+        #     last_improvement_time = time.time()
+        #     stagnation_counter = 0
+        #     curr_mut = mutation_rate; curr_tourn = tournament_size
+        #     min_diff_percent = 0.005 
 
         # --- DATA RECORDING (For Final Plot) ---
         trace_iter.append(iteration)
@@ -463,6 +464,10 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     remaining = TIME_LIMIT - (time.time() - start_time)
     
     final_W, final_H, final_f = global_best_W, global_best_H, global_best_f
+
+    if config.debug_mode:
+        print(f"[DEBUG] Metaheuristic Finished. Final Best Fitness before polishing: {final_f:.6f}")
+        print(f"[DEBUG] Iterations: {iteration}, Time Elapsed: {time.time() - start_time:.2f}s")
 
     if remaining > 1.0:
         final_W, final_H, final_f = optimize_alternating_wrapper(
