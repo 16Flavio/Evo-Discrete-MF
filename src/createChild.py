@@ -76,22 +76,22 @@ def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH,
                 seen_hashes.add(child_hash)
                 children.append([f_res, (W_res, H_res), p1_idx, p2_idx, d1, d2])
         
-        # children.sort(key=lambda x: x[0]) 
-        # if children:
-        #     best_childs = children[:3]
-        #     for i, best_child in enumerate(best_childs):
-        #         fitness, (W, H), p1, p2, d1, d2 = best_child
+        children.sort(key=lambda x: x[0]) 
+        if children:
+            best_childs = children[:1]
+            for i, best_child in enumerate(best_childs):
+                fitness, (W, H), p1, p2, d1, d2 = best_child
                 
-        #         W_opt, H_opt, f_opt = optimize_alternating_wrapper(
-        #             X, 
-        #             W, H, 
-        #             LW, UW, LH, UH,
-        #             max_iters=50,
-        #             config=config
-        #         )
+                W_opt, H_opt, f_opt = optimize_alternating_wrapper(
+                    X, 
+                    W, H, 
+                    LW, UW, LH, UH,
+                    max_iters=100,
+                    config=config
+                )
                 
-        #         if f_opt < fitness:
-        #             children[i] = [f_opt, (W_opt, H_opt), p1, p2, d1, d2]
+                if f_opt < fitness:
+                    children[i] = [f_opt, (W_opt, H_opt), p1, p2, d1, d2]
 
         return children
 

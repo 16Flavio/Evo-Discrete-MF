@@ -1,5 +1,6 @@
 import time
 import numpy as np
+import copy
 
 from .local_search import optimize_alternating_wrapper, optimizeHforW
 from .createChild import generateNewGeneration, align_parents
@@ -54,7 +55,7 @@ def select_diverse_survivors(X, population, N, LW, UW, LH, UH, current_phase, co
 
     # return population[:N], len(population)
 
-    population = population[:(N*6)//10]
+    population = population[:(N*8)//10]
 
     population_W = []
 
@@ -64,7 +65,10 @@ def select_diverse_survivors(X, population, N, LW, UW, LH, UH, current_phase, co
             population_W.append(W_rand)
             seen_hashes.add(W_rand.tobytes())
 
-    population_W.append(generate_antithetic_W(population[0][1][0], LW, UW))
+    w_ant = generate_antithetic_W(population[0][1][0], LW, UW)
+    if w_ant.tobytes() not in seen_hashes:
+        population_W.append(w_ant)
+        seen_hashes.add(w_ant.tobytes())
 
     for W in population_W:
         H, f = optimizeHforW(X, W, np.random.randint(LH, UH + 1, size=(r, n)), LW, UW, LH, UH, config=config)
@@ -284,6 +288,8 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     global_best_H = None
     global_best_f = float('inf')
 
+    STAGNATION_LIMIT = 50
+
     # --- 1. INITIALISATION ---
     pop_W_list = generate_population_W(X, r, N, LW, UW, LH, UH, config=config, verbose=False)
     
@@ -402,8 +408,8 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 W_child, H_child = child[1]
                 population.append([f_child, (W_child, H_child)])
             
-            # Dynamic Diversity Selection
-            population, _ = select_diverse_survivors(active_X, population, N, G_L, G_U, P_L, P_U, current_phase, config=config, min_diff_percent=min_diff_percent)
+            population.sort(key=lambda x: x[0])
+            population = population[:N]
             
             current_best = population[0]
             
@@ -458,29 +464,40 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         if global_best_f == 0:
             break
 
-        # E. Restart Logique (ADAPTIVE)
-        # time_since_last_improv = current_time - last_improvement_time
-        
-        # if time_since_last_improv > restart_threshold:
-        #     restart_count += 1
-        #     restart_threshold = max(5.0, restart_threshold * 0.8)
+        # E. Déclenchement du Restart
+        # if stagnation_counter >= STAGNATION_LIMIT:
+        #     print(f"!!! STAGNATION ({STAGNATION_LIMIT} iters) -> RESTART DE LA POPULATION !!!")
             
-        #     population = apply_smart_restart(
-        #         best_W, best_H, best_f, N, X, LW, UW, LH, UH, 
-        #         seen_hashes, current_phase, restart_count, population,
-        #         config=config
+        #     # 1. Sauvegarde de l'élite (le meilleur absolu)
+        #     elite_f = global_best_f
+        #     elite_W = global_best_W.copy()
+        #     elite_H = global_best_H.copy()
+            
+        #     # 2. Génération d'une nouvelle population aléatoire (taille - 1)
+        #     # On utilise current_target pour respecter la phase (transposée ou non)
+        #     new_Ws = generate_population_W(
+        #         active_X, r, N - 1, 
+        #         G_L, G_U, P_L, P_U, config=config
         #     )
-        #     best_f = population[0][0]
-        #     if current_phase == 'DIRECT':
-        #         best_W, best_H = population[0][1]
-        #     else:
-        #         H_T, W_T = population[0][1]
-        #         best_W, best_H = W_T.T, H_T.T
             
-        #     last_improvement_time = time.time()
+        #     new_pop = []
+        #     for W in new_Ws:
+        #         # Optimisation locale rapide pour rendre les nouveaux individus viables
+        #         H_rand = np.random.randint(P_L, P_U + 1, size=(r, active_X.shape[1]))
+        #         H, f = optimizeHforW(active_X, W, H_rand, G_L, G_U, P_L, P_U, config=config)
+        #         new_pop.append([f, (W, H)])
+            
+        #     # 3. Réinjection de l'élite
+        #     new_pop.append([elite_f, (elite_W, elite_H)])
+            
+        #     # 4. Remplacement de la population
+        #     population = new_pop
+        #     population.sort(key=lambda x: x[0])
+            
+        #     # 5. Reset compteur
         #     stagnation_counter = 0
-        #     curr_mut = mutation_rate; curr_tourn = tournament_size
-        #     min_diff_percent = 0.005 
+            
+        #     print(f"--> Restart terminé. Best fitness maintenu: {elite_f:.6f}")
 
         # --- DATA RECORDING (For Final Plot) ---
         trace_iter.append(iteration)
