@@ -36,12 +36,15 @@ def transpose_population(pop):
     """
     return [transpose_individual(p) for p in pop]
 
-def select_diverse_survivors(X, population, N, LW, UW, LH, UH, m, n, r, current_phase, config, min_diff_percent=0.001):
+def select_diverse_survivors(X, population, N, LW, UW, LH, UH, current_phase, config, min_diff_percent=0.001):
     """
     Selects the top N survivors from the population, ensuring diversity.
     It prioritizes the best solutions but skips those that are too similar to already selected ones
     based on a minimum difference percentage.
     """
+
+    m, n = X.shape
+    r = population[0][1][0].shape[1]
 
     seen_hashes = set()
 
@@ -51,21 +54,23 @@ def select_diverse_survivors(X, population, N, LW, UW, LH, UH, m, n, r, current_
 
     # return population[:N], len(population)
 
-    population = population[:(N*9)//10]
+    population = population[:(N*6)//10]
 
     population_W = []
 
-    while len(population) + len(population_W) < N:
+    while len(population) + len(population_W) < N - 1:
         W_rand = np.random.randint(LW, UW + 1, size=(m, r))
         if W_rand.tobytes() not in seen_hashes:
             population_W.append(W_rand)
             seen_hashes.add(W_rand.tobytes())
 
+    population_W.append(generate_antithetic_W(population[0][1][0], LW, UW))
+
     for W in population_W:
         H, f = optimizeHforW(X, W, np.random.randint(LH, UH + 1, size=(r, n)), LW, UW, LH, UH, config=config)
-        if current_phase == 'TRANSPOSE':
-            W, H = H.T, W.T
         population.append([f, (W, H)])
+
+    population.sort(key=lambda x: x[0])
 
     return population, len(population)
 
@@ -355,8 +360,8 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         
         # A. Changement de Phase
         switch_triggered = False
-        if stagnation_counter > 10: switch_triggered = True
-        elif iters_in_phase > 30: switch_triggered = True
+        #if stagnation_counter > 10: switch_triggered = True
+        if iters_in_phase > 30: switch_triggered = True
             
         if switch_triggered and config.allow_transpose:
             if current_phase == 'DIRECT':
@@ -383,9 +388,9 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         # C. Evolution
         temp_hashes = set() 
         children = generateNewGeneration(
-            temp_hashes, population, N//3, active_X, 
+            temp_hashes, population, N, active_X, 
             G_L, G_U, P_L, P_U, 
-            start_time, TIME_LIMIT, int(curr_tourn), float(mutation_rate),
+            start_time, TIME_LIMIT, int(tournament_size), float(mutation_rate),
             config=config
         )
         
@@ -398,7 +403,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 population.append([f_child, (W_child, H_child)])
             
             # Dynamic Diversity Selection
-            population, _ = select_diverse_survivors(X, population, N, LW, UW, LH, UH, m, n, r, current_phase, config=config, min_diff_percent=min_diff_percent)
+            population, _ = select_diverse_survivors(active_X, population, N, G_L, G_U, P_L, P_U, current_phase, config=config, min_diff_percent=min_diff_percent)
             
             current_best = population[0]
             

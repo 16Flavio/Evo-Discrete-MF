@@ -46,7 +46,7 @@ class ConfigAblation:
 
         conf.factorization_mode = "BMF"
         
-        conf.use_greedy = False
+        conf.use_greedy = True
 
         conf.allow_transpose = True
 
@@ -65,9 +65,9 @@ class ConfigAblation:
 
         conf.factorization_mode = "IMF"
 
-        conf.use_greedy = False
-        conf.use_kmeans = False
-        conf.use_nmf = False
+        conf.use_greedy = True
+        conf.use_kmeans = True
+        conf.use_nmf = True
 
         conf.allow_transpose = True
 

@@ -403,22 +403,31 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
             Child_W = Child_W.cwiseMax(LW).cwiseMin(UW);
             Child_H = Child_H.cwiseMax(LH).cwiseMin(UH);
 
-            // Mutation par enfant sur une colonne
-            if (dist_prob(gen) < mutation_rate) {
-                uniform_int_distribution<> dist_col_idx(0, r - 1);
-                int col = dist_col_idx(gen);
-                double col_mutation_intensity = 0.1;
-                for (int row = 0; row < m; ++row) {
-                    if (dist_prob(gen) < col_mutation_intensity) {
-                        int current_val = Child_W(row, col);
-                        Child_W(row, col) = (current_val == LW) ? UW : LW;
+            double col_mutation_intensity = 0.1; 
+
+            for (int col = 0; col < r; ++col) {
+                if (dist_prob(gen) < mutation_rate) {
+                    for (int row = 0; row < m; ++row) {
+                        if (dist_prob(gen) < col_mutation_intensity) {
+                            int current_val = Child_W(row, col);
+                            
+                            if (mode_opti == "BMF") {
+                                // BMF 
+                                Child_W(row, col) = (current_val == LW) ? UW : LW;
+                            } else {
+                                // IMF 
+                                int delta = (dist_prob(gen) < 0.5) ? 1 : -1;
+                                int new_val = current_val + delta;
+                                Child_W(row, col) = std::max(LW, std::min(UW, new_val));
+                            }
+                        }
                     }
                 }
             }
 
             double f_obj = 0.0;
             
-            int max_refine = 1;
+            int max_refine = 5;
             for(int iter=0; iter<max_refine; ++iter) {
 
                 if(mode_opti == "IMF") f_obj = solve_matrix_imf(X, Child_W.cast<double>(), Child_H, LH, UH);
@@ -432,6 +441,10 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
                 Child_W = WT.transpose();
             }
             
+            // if(mode_opti == "IMF") f_obj = solve_matrix_imf(X, Child_W.cast<double>(), Child_H, LH, UH);
+            // else if(mode_opti == "BMF") f_obj = solve_matrix_bmf(X, Child_W, Child_H, LH, UH);
+            // else f_obj = solve_matrix_relu(X, Child_W, Child_H, LH, UH);
+
             // Anti-Clone (léger)
             if (count_diff(Child_W, W1) == 0 || count_diff(Child_W, W2) == 0) {
                  int bits_to_flip = std::max(1, (int)(m * r * 0.01)); 
