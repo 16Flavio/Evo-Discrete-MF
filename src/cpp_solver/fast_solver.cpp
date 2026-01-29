@@ -30,7 +30,7 @@ VectorXd solve_continuous_bounded(const MatrixXd& WtW, const VectorXd& Wtx, doub
 
     VectorXd v = WtW * h;
     int max_iter = 50; 
-    double tol = 1e-5;
+    double tol = 1e-1;
     
     for(int iter=0; iter<max_iter; ++iter) {
         double max_change = 0.0;
@@ -112,61 +112,6 @@ void sphere_decoder_recursive(
     }
 }
 
-// --- SOLVEURS SPÉCIALISÉS (RELU) ---
-
-double solve_column_relu_sphere(
-    const VectorXd& X_col, const MatrixXd& W,
-    VectorXi& h_col, double LH, double UH, long long node_limit
-) {
-    int r = (int)W.cols();
-    int m = (int)W.rows();
-    
-    // Init
-    MatrixXd WtW = W.transpose() * W;
-    VectorXd Wtx = W.transpose() * X_col;
-    VectorXd h_cont = solve_continuous_bounded(WtW, Wtx, LH, UH);
-    for(int i=0; i<r; ++i) h_col(i) = (int)std::round(h_cont(i));
-    
-    double best_relu_error = (X_col - (W * h_col.cast<double>()).cwiseMax(0.0)).squaredNorm();
-
-    for(int iter=0; iter<2; ++iter) {
-        VectorXd weights = VectorXd::Ones(m);
-        VectorXd rec = W * h_col.cast<double>();
-        for(int i=0; i<m; ++i) if (rec(i) <= 0 && X_col(i) <= 0) weights(i) = 1e-4;
-        
-        MatrixXd W_scaled = W;
-        VectorXd sqrt_w = weights.cwiseSqrt();
-        for(int i=0; i<m; ++i) W_scaled.row(i) *= sqrt_w(i);
-        VectorXd X_scaled = X_col.cwiseProduct(sqrt_w);
-        
-        MatrixXd WtW_s = W_scaled.transpose() * W_scaled;
-        VectorXd Wtx_s = W_scaled.transpose() * X_scaled;
-        
-        LLT<MatrixXd> llt(WtW_s);
-        if (llt.info() == Eigen::Success) {
-            MatrixXd R = llt.matrixU();
-            VectorXd z = llt.matrixL().solve(Wtx_s);
-            
-            double best_quad_dist = (R * h_col.cast<double>() - z).squaredNorm();
-            VectorXi temp_h = VectorXi::Zero(r);
-            long long nodes = 0;
-
-            auto relu_visitor = [&](const VectorXi& candidate_h, double quad_error) {
-                if (quad_error < best_quad_dist) best_quad_dist = quad_error;
-
-                double real_err = (X_col - (W * candidate_h.cast<double>()).cwiseMax(0.0)).squaredNorm();
-                if (real_err < best_relu_error) {
-                    best_relu_error = real_err;
-                    h_col = candidate_h;
-                }
-            };
-
-            sphere_decoder_recursive(r-1, r, 0.0, R, z, LH, UH, temp_h, best_quad_dist, nodes, node_limit, relu_visitor);
-        }
-    }
-    return best_relu_error;
-}
-
 // --- SOLVEURS GLOBAUX ---
 
 double solve_matrix_imf(const MatrixXd& X, const MatrixXd& W, MatrixXi& H, double LH, double UH) {
@@ -190,17 +135,17 @@ double solve_matrix_imf(const MatrixXd& X, const MatrixXd& W, MatrixXi& H, doubl
             h_col = h_col.cwiseMax((int)LH).cwiseMin((int)UH);
             
             double best_dist_sq = (R * h_col.cast<double>() - z).squaredNorm();
-            VectorXi temp_h = VectorXi::Zero(r);
-            long long nodes = 0;
+            // VectorXi temp_h = VectorXi::Zero(r);
+            // long long nodes = 0;
             
-            auto imf_visitor = [&](const VectorXi& candidate_h, double quad_error) {
-                if (quad_error < best_dist_sq) {
-                    best_dist_sq = quad_error;
-                    h_col = candidate_h;
-                }
-            };
+            // auto imf_visitor = [&](const VectorXi& candidate_h, double quad_error) {
+            //     if (quad_error < best_dist_sq) {
+            //         best_dist_sq = quad_error;
+            //         h_col = candidate_h;
+            //     }
+            // };
 
-            sphere_decoder_recursive(r-1, r, 0.0, R, z, LH, UH, temp_h, best_dist_sq, nodes, node_limit, imf_visitor);
+            // sphere_decoder_recursive(r-1, r, 0.0, R, z, LH, UH, temp_h, best_dist_sq, nodes, node_limit, imf_visitor);
             
             H.col(j) = h_col;
             total_error += std::max(0.0, X.col(j).squaredNorm() - z.squaredNorm() + best_dist_sq);
@@ -284,19 +229,204 @@ double solve_matrix_bmf(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Targ
     return total_error;
 }
 
-double solve_matrix_relu(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Target, int L, int U) {
-    MatrixXd W_d = Fixed.cast<double>();
-    int n = (int)X.cols();
-    double total_error = 0.0;
-    long long node_limit = 20000;
-
-    #pragma omp parallel for reduction(+:total_error)
-    for (int j = 0; j < n; ++j) {
-        VectorXi h_col = Target.col(j);
-        double err = solve_column_relu_sphere(X.col(j), W_d, h_col, (double)L, (double)U, node_limit);
-        Target.col(j) = h_col;
-        total_error += err;
+struct AcdWorkspace {
+    std::vector<double> breakpts;
+    std::vector<int> p;     // Permutation pour le tri
+    std::vector<int> indices;
+    
+    // Buffers pour les valeurs triées et calculs
+    std::vector<double> sga;
+    std::vector<double> aa;
+    std::vector<double> bb;
+    std::vector<double> bc_term; // bb - 2*bc
+    std::vector<double> tl_term; // 2*(ab - ac)
+    
+    // Resize une seule fois par thread
+    void resize(int m) {
+        if (breakpts.size() < (size_t)m) {
+            breakpts.resize(m);
+            p.resize(m);
+            indices.resize(m);
+            sga.resize(m);
+            aa.resize(m);
+            bb.resize(m);
+            bc_term.resize(m);
+            tl_term.resize(m);
+        }
     }
+};
+
+// Implémentation fidèle de findmin de ACD_NMD.cpp
+// Minimise ||c - max(0, b + ax)||^2
+double findmin_workspace(const VectorXd& a_vec, const VectorXd& b_vec, const VectorXd& c_vec, AcdWorkspace& ws) {
+    int m = (int)a_vec.size();
+    int nnz = 0;
+    
+    // 1. Filtrage des zéros et calcul des breakpoints
+    // Correspond à la boucle initiale de findmin dans ACD_NMD.cpp
+    for(int i=0; i<m; ++i) {
+        if(std::abs(a_vec(i)) > 1e-16) {
+            ws.indices[nnz] = i;
+            ws.breakpts[nnz] = -b_vec(i) / a_vec(i);
+            ws.p[nnz] = nnz; // Prépare la permutation
+            nnz++;
+        }
+    }
+    
+    if(nnz == 0) return 0.0;
+
+    // 2. Tri des breakpoints
+    // ACD_NMD.cpp utilise gsl_sort_index, ici std::sort fait pareil
+    std::sort(ws.p.begin(), ws.p.begin() + nnz, [&](int i, int j) {
+        return ws.breakpts[i] < ws.breakpts[j];
+    });
+
+    // 3. Initialisation des coefficients quadratiques (Zone "Far Left")
+    double ti = 0.0; 
+    double tl = 0.0; 
+    double tq = 0.0;
+
+    // Pré-calculs et initialisation simultanée
+    // Dans ACD_NMD, "ti" commence par la somme des c^2
+    // Ici on le fait à la volée ou on suppose que l'erreur constante ne change pas le min x
+    // Mais pour être exact sur la valeur de fonction, il faut ajouter c^2.
+    // NOTE: Pour trouver xopt, le terme constant sum(c^2) n'importe pas, 
+    // mais il est utilisé dans la logique "Quadratic function far left" de ACD_NMD.cpp.
+    
+    // On doit accumuler sum(c^2) pour être rigoureusement identique à l'algo original
+    // bien que mathématiquement inutile pour la dérivée.
+    for(int i=0; i<nnz; ++i) {
+        int idx = ws.indices[ws.p[i]]; // Index réel via permutation triée
+        double cv = c_vec(idx);
+        ti += cv * cv; 
+    }
+    // Note: ACD_NMD ajoute aussi les c[i] des indices où a[i]==0. 
+    // Ici on simplifie car cela ne change pas la position du minimum.
+
+    for(int k=0; k<nnz; ++k) {
+        int original_idx_in_arrays = ws.p[k];
+        int idx = ws.indices[original_idx_in_arrays];
+        
+        double av = a_vec(idx);
+        double bv = b_vec(idx);
+        double cv = c_vec(idx);
+        
+        // Stockage dans l'ordre trié pour la boucle de balayage
+        double sgn = (av < 0 ? -1.0 : 1.0);
+        ws.sga[k] = sgn;
+        ws.aa[k] = av * av;
+        ws.bc_term[k] = bv*bv - 2*bv*cv; // bb - 2bc
+        ws.tl_term[k] = 2*av*bv - 2*av*cv; // 2ab - 2ac
+        
+        // Logique "Far Left" de ACD_NMD.cpp
+        // Si a[i] < 0, alors pour x -> -inf, a*x -> +inf, donc ReLU est actif.
+        if (av < -1e-16) {
+            ti += ws.bc_term[k];         // + bb - 2bc
+            tl += ws.tl_term[k];         // + 2ab - 2ac
+            tq += ws.aa[k];              // + aa
+        }
+    }
+
+    // Premier candidat : minimum de la parabole de gauche ou le premier breakpoint
+    double xmin = (std::abs(tq) > 1e-16) ? -tl / (2 * tq) : 0.0;
+    
+    // "Which is the best: the min or the first breakpoint ?"
+    double bp0 = ws.breakpts[ws.p[0]]; // Premier breakpoint trié
+    double xopt = (xmin < bp0) ? xmin : bp0;
+    
+    double yopt = ti + tl * xopt + tq * xopt * xopt;
+
+    // 4. Balayage des intervalles (Update dynamique)
+    for(int k=0; k<nnz; ++k) {
+        // Mise à jour des coefficients en traversant le breakpoint k
+        // ACD_NMD.cpp : ti += sga * (bb - 2bc), etc.
+        double sg = ws.sga[k];
+        ti += sg * ws.bc_term[k];
+        tl += sg * ws.tl_term[k];
+        tq += sg * ws.aa[k];
+        
+        // Nouveau min local
+        xmin = (std::abs(tq) > 1e-16) ? -tl / (2 * tq) : 0.0; // 0.0 fallback si plat
+        
+        // Bornes de l'intervalle courant
+        double current_bp = ws.breakpts[ws.p[k]];
+        double next_bp = (k + 1 < nnz) ? ws.breakpts[ws.p[k+1]] : 1e20; // +inf
+        
+        // "Check if xmin is between two breakpoints"
+        double xt;
+        if (xmin > current_bp && xmin < next_bp) {
+            xt = xmin;
+        } else {
+            // Sinon on teste la borne (ici current_bp, logic de ACD_NMD)
+            xt = current_bp; 
+            // Note: ACD_NMD teste 'breakpts[i]' comme candidat si xmin hors borne.
+        }
+        
+        double yval = ti + tl * xt + tq * xt * xt;
+        if (yval < yopt) {
+            yopt = yval;
+            xopt = xt;
+        }
+    }
+    
+    return xopt;
+}
+
+// Fonction de remplacement pour solve_matrix_relu
+double solve_matrix_relu(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Target, int L, int U) {
+    MatrixXd W = Fixed.cast<double>();
+    int m = (int)X.rows();
+    int n = (int)X.cols();
+    int r = (int)Fixed.cols();
+
+    double total_error = 0.0;
+    int acd_iter = 10; // Suffisant pour convergence locale
+
+    #pragma omp parallel 
+    {
+        // Allocation UNIQUE par thread (Workspace)
+        // Ceci évite l'allocation répétée à chaque appel de findmin
+        AcdWorkspace ws;
+        ws.resize(m); // Pré-alloue pour la taille m (547 dans votre cas)
+
+        #pragma omp for reduction(+:total_error)
+        for (int j = 0; j < n; ++j) {
+            VectorXd h_col = Target.col(j).cast<double>();
+            VectorXd X_col = X.col(j);
+            VectorXd wh_col = W * h_col; // Cache
+
+            for(int iter=0; iter<acd_iter; ++iter) {
+                bool changed = false;
+                for(int k=0; k<r; ++k) {
+                    double h_old = h_col(k);
+                    
+                    // b = wh - Wk * h_old
+                    // Nous calculons b_vec explicitement. C'est le coût principal mais nécessaire.
+                    // Pour optimiser, on pourrait le faire en une ligne Eigen optimisée.
+                    VectorXd b_vec = wh_col - W.col(k) * h_old;
+                    
+                    // Appel avec le workspace du thread
+                    double h_new = findmin_workspace(W.col(k), b_vec, X_col, ws);
+                    
+                    if(std::abs(h_new - h_old) > 1e-6) {
+                        h_col(k) = h_new;
+                        wh_col += W.col(k) * (h_new - h_old);
+                        changed = true;
+                    }
+                }
+                if(!changed) break; 
+            }
+
+            // Arrondi et Bornage
+            VectorXi h_int = h_col.array().round().cast<int>().cwiseMax(L).cwiseMin(U);
+            Target.col(j) = h_int;
+            
+            // Erreur finale
+            VectorXd wh_final = (Fixed.cast<double>() * h_int.cast<double>()).cwiseMax(0.0);
+            total_error += (X_col - wh_final).squaredNorm();
+        }
+    }
+
     return total_error;
 }
 
@@ -427,7 +557,7 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
 
             double f_obj = 0.0;
             
-            int max_refine = 5;
+            int max_refine = 1;
             for(int iter=0; iter<max_refine; ++iter) {
 
                 if(mode_opti == "IMF") f_obj = solve_matrix_imf(X, Child_W.cast<double>(), Child_H, LH, UH);

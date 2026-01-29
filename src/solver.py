@@ -388,7 +388,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         # C. Evolution
         temp_hashes = set() 
         children = generateNewGeneration(
-            temp_hashes, population, N, active_X, 
+            temp_hashes, population, N//3, active_X, 
             G_L, G_U, P_L, P_U, 
             start_time, TIME_LIMIT, int(tournament_size), float(mutation_rate),
             config=config
