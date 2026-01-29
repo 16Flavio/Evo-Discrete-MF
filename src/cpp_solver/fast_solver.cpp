@@ -355,12 +355,10 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
         mt19937 gen(thread_seed); 
         uniform_int_distribution<> dist_idx(0, pop_size - 1);
         uniform_real_distribution<> dist_prob(0.0, 1.0);
-        uniform_int_distribution<> dist_val_W(LW, UW);
-        uniform_int_distribution<> dist_col(0, r - 1);
-        uniform_int_distribution<> dist_row(0, m - 1);
-
+        
         #pragma omp for schedule(dynamic)
         for (int i = 0; i < num_children; ++i) {
+            // Sélection par Tournoi
             int best_p1 = -1; double best_f1 = 1e20;
             for(int t=0; t<tournament_size; ++t) {
                 int idx = dist_idx(gen);
@@ -372,63 +370,57 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
                 if (Pop_Fitness[idx] < best_f2) { best_f2 = Pop_Fitness[idx]; best_p2 = idx; }
             }
             
+            // Ordonnancement P1 = Meilleur
+            if (best_f2 < best_f1) { std::swap(best_p1, best_p2); std::swap(best_f1, best_f2); }
+            
             MatrixXi W1 = Pop_W[best_p1], H1 = Pop_H[best_p1];
             MatrixXi W2 = Pop_W[best_p2], H2 = Pop_H[best_p2];
             align_in_place(W1, W2, H2);
             
+            // Crossover biaisé
+            double prob_p1 = 0.5;
+            if (best_f1 + best_f2 > 1e-9) prob_p1 = best_f2 / (best_f1 + best_f2); 
+            if(prob_p1 < 0.5) prob_p1 = 0.5; 
+
             MatrixXi Child_W(m, r);
             MatrixXi Child_H(r, H1.cols());
 
-            if(crossover_mode == 0){ 
-                if (dist_prob(gen) < 0.6) {
-                    for(int k=0; k<r; ++k) {
-                        if(dist_prob(gen) < 0.5) { Child_W.col(k) = W1.col(k); Child_H.row(k) = H1.row(k); }
-                        else { Child_W.col(k) = W2.col(k); Child_H.row(k) = H2.row(k); }
-                    }
-                } else { 
-                    Child_W = ((W1.cast<double>() + W2.cast<double>()) * 0.5).array().round().cast<int>();
-                    Child_H = ((H1.cast<double>() + H2.cast<double>()) * 0.5).array().round().cast<int>();
-                }
-            } else { 
-                 for(int k=0; k<r; ++k) {
-                    if(dist_prob(gen) < 0.5) { Child_W.col(k) = W1.col(k); Child_H.row(k) = H1.row(k); }
-                    else { Child_W.col(k) = W2.col(k); Child_H.row(k) = H2.row(k); }
-                }
+            // if(crossover_mode == 0){ 
+            //     for(int k=0; k<r; ++k) {
+            //         if(dist_prob(gen) < prob_p1) { Child_W.col(k) = W1.col(k); Child_H.row(k) = H1.row(k); } 
+            //         else { Child_W.col(k) = W2.col(k); Child_H.row(k) = H2.row(k); }
+            //     }
+            // } else { 
+            //     Child_W = ((W1.cast<double>() * prob_p1 + W2.cast<double>() * (1.0-prob_p1))).array().round().cast<int>();
+            //     Child_H = ((H1.cast<double>() * prob_p1 + H2.cast<double>() * (1.0-prob_p1))).array().round().cast<int>();
+            // }
+
+            for(int k=0; k<r; ++k) {
+                if(dist_prob(gen) < prob_p1) { Child_W.col(k) = W1.col(k); Child_H.row(k) = H1.row(k); } 
+                else { Child_W.col(k) = W2.col(k); Child_H.row(k) = H2.row(k); }
             }
             
             Child_W = Child_W.cwiseMax(LW).cwiseMin(UW);
             Child_H = Child_H.cwiseMax(LH).cwiseMin(UH);
 
-            // --- MUTATION : PERTURBATION LOCALE ---
-            // On parcourt chaque élément de Child_W et on le modifie de +/- 1 
-            // avec une probabilité égale à mutation_rate
-            for (int col = 0; col < r; ++col) {
+            // Mutation par enfant sur une colonne
+            if (dist_prob(gen) < mutation_rate) {
+                uniform_int_distribution<> dist_col_idx(0, r - 1);
+                int col = dist_col_idx(gen);
+                double col_mutation_intensity = 0.1;
                 for (int row = 0; row < m; ++row) {
-                    if (dist_prob(gen) < mutation_rate) {
+                    if (dist_prob(gen) < col_mutation_intensity) {
                         int current_val = Child_W(row, col);
-                        int delta = (dist_prob(gen) < 0.5) ? 1 : -1;
-                        int new_val = current_val + delta;
-                        
-                        // Respect des bornes (clamping)
-                        if (new_val >= LW && new_val <= UW) {
-                            Child_W(row, col) = new_val;
-                        }
-                        // Si le mouvement nous sort des bornes, on tente l'inverse
-                        else if (new_val < LW) {
-                            Child_W(row, col) = current_val + 1; // Forcé vers le haut
-                        } else {
-                            Child_W(row, col) = current_val - 1; // Forcé vers le bas
-                        }
-                        // Re-clamping final par sécurité
-                        Child_W(row, col) = std::max(LW, std::min(UW, Child_W(row, col)));
+                        Child_W(row, col) = (current_val == LW) ? UW : LW;
                     }
                 }
             }
 
             double f_obj = 0.0;
             
-            // Raffinement classique (3 itérations)
-            for(int iter=0; iter<3; ++iter) {
+            int max_refine = 1;
+            for(int iter=0; iter<max_refine; ++iter) {
+
                 if(mode_opti == "IMF") f_obj = solve_matrix_imf(X, Child_W.cast<double>(), Child_H, LH, UH);
                 else if(mode_opti == "BMF") f_obj = solve_matrix_bmf(X, Child_W, Child_H, LH, UH);
                 else f_obj = solve_matrix_relu(X, Child_W, Child_H, LH, UH);
@@ -438,6 +430,17 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
                 else if(mode_opti == "BMF") f_obj = solve_matrix_bmf(XT, Child_H.transpose(), WT, LW, UW);
                 else f_obj = solve_matrix_relu(XT, Child_H.transpose(), WT, LW, UW);
                 Child_W = WT.transpose();
+            }
+            
+            // Anti-Clone (léger)
+            if (count_diff(Child_W, W1) == 0 || count_diff(Child_W, W2) == 0) {
+                 int bits_to_flip = std::max(1, (int)(m * r * 0.01)); 
+                 for(int k=0; k<bits_to_flip; ++k) {
+                     int rc = (int)(dist_prob(gen) * r * m);
+                     int c = rc / m; int r_idx = rc % m;
+                     if(c < r && r_idx < m) Child_W(r_idx, c) = (Child_W(r_idx, c) == LW) ? UW : LW;
+                 }
+                 if(mode_opti == "BMF") f_obj = solve_matrix_bmf(X, Child_W, Child_H, LH, UH);
             }
             
             results[i] = make_tuple(Child_W, Child_H, f_obj, best_p1, best_p2, count_diff(Child_W, W1), count_diff(Child_W, W2));

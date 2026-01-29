@@ -86,7 +86,7 @@ def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH,
                     X, 
                     W, H, 
                     LW, UW, LH, UH,
-                    max_iters=100,
+                    max_iters=50,
                     config=config
                 )
                 

@@ -3,7 +3,7 @@ import numpy as np
 
 from .local_search import optimize_alternating_wrapper, optimizeHforW
 from .createChild import generateNewGeneration, align_parents
-from .init_pop import generate_population_W, perturb_W, generate_antithetic_W, perturb_W_destructive
+from .init_pop import generate_population_W, perturb_W, generate_antithetic_W, perturb_W_destructive, initialize_column_sampling
 
 try:
     from .fast_solver import get_aligned_distance
@@ -36,17 +36,38 @@ def transpose_population(pop):
     """
     return [transpose_individual(p) for p in pop]
 
-def select_diverse_survivors(population, N, min_diff_percent=0.001):
+def select_diverse_survivors(X, population, N, LW, UW, LH, UH, m, n, r, current_phase, config, min_diff_percent=0.001):
     """
     Selects the top N survivors from the population, ensuring diversity.
     It prioritizes the best solutions but skips those that are too similar to already selected ones
     based on a minimum difference percentage.
     """
+
+    seen_hashes = set()
+
     population.sort(key=lambda x: x[0])
     # if min_diff_percent <= 0 or not population:
     #     return population[:N], len(population)
-    
-    return population[:N], len(population)
+
+    # return population[:N], len(population)
+
+    population = population[:(N*9)//10]
+
+    population_W = []
+
+    while len(population) + len(population_W) < N:
+        W_rand = np.random.randint(LW, UW + 1, size=(m, r))
+        if W_rand.tobytes() not in seen_hashes:
+            population_W.append(W_rand)
+            seen_hashes.add(W_rand.tobytes())
+
+    for W in population_W:
+        H, f = optimizeHforW(X, W, np.random.randint(LH, UH + 1, size=(r, n)), LW, UW, LH, UH, config=config)
+        if current_phase == 'TRANSPOSE':
+            W, H = H.T, W.T
+        population.append([f, (W, H)])
+
+    return population, len(population)
 
     survivors = []
     survivors.append(population[0]) 
@@ -364,7 +385,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         children = generateNewGeneration(
             temp_hashes, population, N//3, active_X, 
             G_L, G_U, P_L, P_U, 
-            start_time, TIME_LIMIT, int(curr_tourn), float(curr_mut),
+            start_time, TIME_LIMIT, int(curr_tourn), float(mutation_rate),
             config=config
         )
         
@@ -377,7 +398,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 population.append([f_child, (W_child, H_child)])
             
             # Dynamic Diversity Selection
-            population, _ = select_diverse_survivors(population, N, min_diff_percent)
+            population, _ = select_diverse_survivors(X, population, N, LW, UW, LH, UH, m, n, r, current_phase, config=config, min_diff_percent=min_diff_percent)
             
             current_best = population[0]
             
@@ -404,19 +425,20 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                     global_best_W, global_best_H = best_W.copy(), best_H.copy()
 
                 # Intensification
-                W_c, H_c = current_best[1]
-                W_boost, H_boost, f_boost = optimize_alternating_wrapper(
-                    active_X.astype(float), W_c, H_c, G_L, G_U, P_L, P_U, config=config, max_iters=100
-                )
-                if f_boost < best_f:
-                     best_f = f_boost
-                     population[0] = [best_f, (W_boost, H_boost)]
-                     if current_phase == 'DIRECT': best_W, best_H = W_boost, H_boost
-                     else: best_W, best_H = H_boost.T, W_boost.T
+                
+                # W_c, H_c = current_best[1]
+                # W_boost, H_boost, f_boost = optimize_alternating_wrapper(
+                #     active_X.astype(float), W_c, H_c, G_L, G_U, P_L, P_U, config=config, max_iters=50
+                # )
+                # if f_boost < best_f:
+                #      best_f = f_boost
+                #      population[0] = [best_f, (W_boost, H_boost)]
+                #      if current_phase == 'DIRECT': best_W, best_H = W_boost, H_boost
+                #      else: best_W, best_H = H_boost.T, W_boost.T
                      
-                     if best_f < global_best_f:
-                        global_best_f = best_f
-                        global_best_W, global_best_H = best_W.copy(), best_H.copy()
+                #      if best_f < global_best_f:
+                #         global_best_f = best_f
+                #         global_best_W, global_best_H = best_W.copy(), best_H.copy()
                         
                 curr_mut = max(0.05, curr_mut * 0.9)
                 curr_tourn = min(8, curr_tourn + 1)
