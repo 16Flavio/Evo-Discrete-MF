@@ -409,7 +409,17 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 population.append([f_child, (W_child, H_child)])
             
             population.sort(key=lambda x: x[0])
-            population = population[:N]
+            population = population[:(N*8)//10]
+
+            while (len(population) < N):
+                W_rand = np.random.randint(G_L, G_U + 1, size=(active_X.shape[0], r))
+                if W_rand.tobytes() not in seen_hashes:
+                    H_rand = np.random.randint(P_L, P_U + 1, size=(r, active_X.shape[1]))
+                    H_opt, f = optimizeHforW(active_X, W_rand, H_rand, G_L, G_U, P_L, P_U, config=config)
+                    population.append([f, (W_rand, H_opt)])
+                    seen_hashes.add(W_rand.tobytes())
+                
+            population.sort(key=lambda x: x[0])
             
             current_best = population[0]
             

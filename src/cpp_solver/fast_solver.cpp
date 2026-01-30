@@ -288,200 +288,52 @@ void integer_cd_imf(const MatrixXd& W, const VectorXd& W_norms_sq, const VectorX
     }
 }
 
-// -------------------------------------------------------------
-// NOUVEAU : COORDINATE DESCENT POUR BMF SATURE (min(1, WH))
-// -------------------------------------------------------------
-void integer_cd_bmf_saturated(const MatrixXd& W, const VectorXd& X_col, VectorXi& h_int, int L, int U, mt19937& gen) {
+void integer_cd_bmf(const MatrixXd& W, const VectorXd& X_col, VectorXi& h_int, int L, int U, mt19937& gen) {
     int r = (int)h_int.size();
     int m = (int)X_col.size();
-    
-    // Reconstruction courante
     VectorXd wh = W * h_int.cast<double>();
     
     std::vector<int> indices(r);
     std::iota(indices.begin(), indices.end(), 0);
 
-    int max_passes = 3;
-    for(int pass=0; pass<max_passes; ++pass) {
+    for(int pass=0; pass<3; ++pass) {
         std::shuffle(indices.begin(), indices.end(), gen);
         bool changed = false;
         
         for(int k : indices) {
-            int current_val = h_int(k);
-            int other_val = 1 - current_val; // Flip
-            double diff = (double)other_val - (double)current_val;
-            
-            double delta_error = 0.0;
-            
-            // Calcul optimisé du gain sur erreur quadratique saturée
-            for(int i=0; i<m; ++i) {
-                double w_ik = W(i, k);
-                if (std::abs(w_ik) < 1e-9) continue;
+            int current_v = h_int(k);
+            double best_err = -1.0;
+            int best_v = current_v;
+
+            // Tester les valeurs dans [L, U] autour de la valeur actuelle
+            for(int v = L; v <= U; ++v) {
+                double diff = (double)v - (double)current_v;
+                double step_err = 0;
                 
-                double old_wh = wh(i);
-                double new_wh = old_wh + w_ik * diff;
-                
-                double target = X_col(i);
-                
-                double t_old = std::min(1.0, old_wh);
-                double err_old = (target - t_old) * (target - t_old);
-                
-                double t_new = std::min(1.0, new_wh);
-                double err_new = (target - t_new) * (target - t_new);
-                
-                delta_error += (err_new - err_old);
+                for(int i=0; i<m; ++i) {
+                    double new_wh_i = wh(i) + W(i, k) * diff;
+                    double prediction = std::min(1.0, new_wh_i);
+                    double d = X_col(i) - prediction;
+                    step_err += d * d;
+                    
+                    // Astuce : Petite pénalité pour éviter les WH inutilement grands (> 1)
+                    // Cela aide à choisir la plus petite valeur de H qui sature le pixel
+                    if (new_wh_i > 1.0) step_err += 1e-5 * (new_wh_i - 1.0);
+                }
+
+                if (best_err < 0 || step_err < best_err) {
+                    best_err = step_err;
+                    best_v = v;
+                }
             }
-            
-            if (delta_error < -1e-9) { 
-                h_int(k) = other_val;
-                wh += W.col(k) * diff;
+
+            if (best_v != current_v) {
+                wh += W.col(k) * (double)(best_v - current_v);
+                h_int(k) = best_v;
                 changed = true;
             }
         }
         if(!changed) break;
-    }
-}
-
-// -------------------------------------------------------------
-//  BEAM SEARCH CONSTRUCTIF POUR BMF (SMART BOOLEAN)
-// -------------------------------------------------------------
-struct BmfBeamNode {
-    vector<int> h_indices; // Indices des colonnes choisies
-    VectorXi counts;       // Couverture actuelle (entier)
-    double error;          // Erreur Hamming
-};
-
-VectorXi solve_col_bmf_beam(const MatrixXd& W, const VectorXd& x, int beam_width) {
-    int m = W.rows();
-    int r = W.cols();
-    
-    // 1. Initialisation
-    BmfBeamNode root;
-    root.h_indices.reserve(r);
-    root.counts = VectorXi::Zero(m);
-    
-    // Erreur initiale : Tous les 1 de x sont des FN
-    root.error = 0;
-    for(int i=0; i<m; ++i) if(x(i)>0.5) root.error++;
-    
-    vector<BmfBeamNode> beam;
-    beam.push_back(root);
-    
-    BmfBeamNode best_global = root;
-    
-    // On peut ajouter au max r colonnes
-    for(int step=0; step<r; ++step) {
-        vector<BmfBeamNode> candidates;
-        candidates.reserve(beam.size() * r);
-        
-        bool improved_in_step = false;
-        
-        // Expansion
-        for(const auto& parent : beam) {
-            // Heuristique d'élagage : ne tester que les colonnes qui couvrent au moins un 1 non couvert ?
-            // Pour la qualité "extraordinaire", on teste tout.
-            
-            for(int k=0; k<r; ++k) {
-                // Vérifier si k est déjà dans h_indices
-                bool present = false;
-                for(int idx : parent.h_indices) if(idx==k) { present=true; break; }
-                if(present) continue;
-                
-                // Création enfant
-                BmfBeamNode child = parent;
-                child.h_indices.push_back(k);
-                
-                // Update incrémental (très rapide)
-                double delta_err = 0;
-                for(int i=0; i<m; ++i) {
-                    if(W(i,k) > 0.5) {
-                        child.counts(i)++;
-                        // Logique Booléenne BMF :
-                        // Si le compteur passe de 0 à 1, l'état change (0->1).
-                        // Si le compteur > 1, l'état reste 1 (pas de changement).
-                        if(parent.counts(i) == 0) {
-                            // On vient d'allumer ce pixel
-                            if(x(i) > 0.5) delta_err -= 1.0; // C'était un 1 (FN), maintenant couvert -> Gain
-                            else delta_err += 1.0;           // C'était un 0, maintenant allumé -> Perte (FP)
-                        }
-                    }
-                }
-                child.error = parent.error + delta_err;
-                candidates.push_back(child);
-            }
-        }
-        
-        if(candidates.empty()) break;
-        
-        // Sélection du Top-K
-        int k_keep = std::min((int)candidates.size(), beam_width);
-        
-        // Partial sort pour garder les meilleurs en tête
-        std::partial_sort(candidates.begin(), candidates.begin()+k_keep, candidates.end(), 
-            [](const BmfBeamNode& a, const BmfBeamNode& b){ return a.error < b.error; });
-            
-        candidates.resize(k_keep);
-        beam = candidates;
-        
-        // Update Global Best
-        if(beam[0].error < best_global.error) {
-            best_global = beam[0];
-            improved_in_step = true;
-        }
-        
-        if(best_global.error == 0) break; // Solution parfaite
-        
-        // Heuristique d'arrêt si la beam ne s'améliore pas ? 
-        // Non, parfois il faut traverser une vallée.
-    }
-    
-    // Reconstruction vecteur
-    VectorXi h_res = VectorXi::Zero(r);
-    for(int idx : best_global.h_indices) h_res(idx) = 1;
-    
-    return h_res;
-}
-
-// Élagage arrière (Reverse Pruning) pour nettoyer les redondances
-void prune_col_bmf(const MatrixXd& W, const VectorXd& x, VectorXi& h) {
-    int m = W.rows();
-    int r = W.cols();
-    
-    // Recalcul des counts
-    VectorXi counts = VectorXi::Zero(m);
-    for(int k=0; k<r; ++k) {
-        if(h(k)) {
-            for(int i=0; i<m; ++i) if(W(i,k)>0.5) counts(i)++;
-        }
-    }
-    
-    bool changed = true;
-    while(changed) {
-        changed = false;
-        for(int k=0; k<r; ++k) {
-            if(!h(k)) continue;
-            
-            // Test : peut-on retirer k ?
-            // Gain = (FP supprimés) - (FN créés)
-            int gain = 0;
-            for(int i=0; i<m; ++i) {
-                if(W(i,k)>0.5) {
-                    // Si on retire k, le count diminue de 1
-                    // L'état change seulement si count passe de 1 à 0
-                    if(counts(i) == 1) {
-                        if(x(i) > 0.5) gain--; // FN créé (mauvais)
-                        else gain++;           // FP supprimé (bon)
-                    }
-                }
-            }
-            
-            if(gain > 0) {
-                h(k) = 0;
-                // Update counts
-                for(int i=0; i<m; ++i) if(W(i,k)>0.5) counts(i)--;
-                changed = true;
-            }
-        }
     }
 }
 
@@ -579,9 +431,15 @@ double solve_matrix_imf(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Targ
 double solve_matrix_bmf(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Target, int L, int U) {
     MatrixXd W = Fixed.cast<double>();
     int n = (int)X.cols();
-    
+    int r = (int)Fixed.cols();
+
+    // On utilise la même stratégie que IMF : QR + Beam Search + CD
+    ColPivHouseholderQR<MatrixXd> qr(W);
+    MatrixXd R = qr.matrixQR().topRows(r).triangularView<Upper>();
+    int K_beam = 8; 
+
+    VectorXd W_norms_sq = W.colwise().squaredNorm(); 
     double total_error = 0.0;
-    int beam_width = 5; // Compromis vitesse/qualité
 
     #pragma omp parallel reduction(+:total_error)
     {
@@ -591,25 +449,32 @@ double solve_matrix_bmf(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Targ
         #pragma omp for 
         for (int j = 0; j < n; ++j) {
             VectorXd X_col = X.col(j);
+            VectorXd y = qr.householderQ().transpose() * X_col;
+
+            // 1. Recherche initiale via Beam Search (Logique IMF)
+            VectorXi h_int = k_best_search_qr(qr, R, y, L, U, K_beam);
             
-            // 1. Beam Search Constructif (Smart Boolean Logic)
-            VectorXi h_int = solve_col_bmf_beam(W, X_col, beam_width);
-            
-            // 2. Pruning (Suppression des redondances)
-            prune_col_bmf(W, X_col, h_int);
-            
-            // 3. Polishing (Coordinate Descent avec fonction saturée)
-            integer_cd_bmf_saturated(W, X_col, h_int, L, U, gen);
+            // 2. Raffinement par Descente de Coordonnées Entière (Logique IMF)
+            integer_cd_bmf(W, X_col, h_int, L, U, gen);
 
             Target.col(j) = h_int;
             
-            // Erreur saturée
-            VectorXd wh = (W * h_int.cast<double>()).cwiseMin(1.0);
+            // 3. Calcul de l'erreur finale avec la fonction SATURÉE : || X - min(1, WH) ||^2
+            // On calcule d'abord WH
+            VectorXd wh = W * h_int.cast<double>();
+            // On applique la saturation min(1, x)
+            for(int i = 0; i < wh.size(); ++i) {
+                if (wh(i) > 1.0) wh(i) = 1.0;
+                // Note: min(1, WH) dans le contexte BMF suppose souvent WH >= 0
+            }
+            
             total_error += (X_col - wh).squaredNorm();
         }
     }
     return total_error;
 }
+
+double solve
 
 tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
     MatrixXd X, MatrixXi W_init, MatrixXi H_init, 
@@ -682,7 +547,9 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
                 if (dist_prob(gen) < mutation_rate) {
                     for (int row = 0; row < m; ++row) {
                         if (mode_opti == "BMF") {
-                            Child_W(row, col) = (Child_W(row, col) == LW) ? UW : LW;
+                            if (dist_prob(gen) < 0.1){
+                                Child_W(row, col) = (Child_W(row, col) == LW) ? UW : LW;
+                            }
                         } else {
                             int delta = (dist_prob(gen) < 0.5) ? 1 : -1;
                             int new_val = Child_W(row, col) + delta;

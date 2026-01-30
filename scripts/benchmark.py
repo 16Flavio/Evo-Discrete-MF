@@ -30,13 +30,13 @@ SCENARIOS = [
         "name": "IMF_Benchmark",
         "input_file": os.path.join(PROJECT_ROOT, "data", "imf_matrix", "large_matrix.txt"),
         "mode": "IMF",
-        "csv_name": "benchmark_init_IMF.csv"
+        "csv_name": "benchmark_mutation_IMF.csv"
     },
     {
         "name": "BMF_Benchmark",
         "input_file": os.path.join(PROJECT_ROOT, "data", "bmf_matrix", "binarizedCBCL.txt"),
         "mode": "BMF",
-        "csv_name": "benchmark_init_BMF.csv"
+        "csv_name": "benchmark_mutation_BMF.csv"
     }
 ]
 
@@ -44,42 +44,47 @@ SCENARIOS = [
 CONFIGURATIONS = {
     # --- 1. INITIALISATION COMBINATIONS (2^4 - 1 = 15 cases) ---
     # 4 Actives (Full)
-    "Init: All (Ref)": [],
+    # "Init: All (Ref)": [],
 
-    # 3 Actives (1 Disabled)
-    "Init: No SVD": ["--no-svd"],
-    "Init: No KMeans": ["--no-kmeans"],
-    "Init: No NMF": ["--no-nmf"],
-    "Init: No Greedy": ["--no-greedy"],
+    # # 3 Actives (1 Disabled)
+    # "Init: No SVD": ["--no-svd"],
+    # "Init: No KMeans": ["--no-kmeans"],
+    # "Init: No NMF": ["--no-nmf"],
+    # "Init: No Greedy": ["--no-greedy"],
 
-    # 2 Actives (2 Disabled)
-    "Init: SVD + KMeans": ["--no-nmf", "--no-greedy"],
-    "Init: SVD + NMF": ["--no-kmeans", "--no-greedy"],
-    "Init: SVD + Greedy": ["--no-kmeans", "--no-nmf"],
-    "Init: KMeans + NMF": ["--no-svd", "--no-greedy"],
-    "Init: KMeans + Greedy": ["--no-svd", "--no-nmf"],
-    "Init: NMF + Greedy": ["--no-svd", "--no-kmeans"],
+    # # 2 Actives (2 Disabled)
+    # "Init: SVD + KMeans": ["--no-nmf", "--no-greedy"],
+    # "Init: SVD + NMF": ["--no-kmeans", "--no-greedy"],
+    # "Init: SVD + Greedy": ["--no-kmeans", "--no-nmf"],
+    # "Init: KMeans + NMF": ["--no-svd", "--no-greedy"],
+    # "Init: KMeans + Greedy": ["--no-svd", "--no-nmf"],
+    # "Init: NMF + Greedy": ["--no-svd", "--no-kmeans"],
 
-    # 1 Active (3 Disabled)
-    "Init: Only SVD": ["--no-kmeans", "--no-nmf", "--no-greedy"],
-    "Init: Only KMeans": ["--no-svd", "--no-nmf", "--no-greedy"],
-    "Init: Only NMF": ["--no-svd", "--no-kmeans", "--no-greedy"],
-    "Init: Only Greedy": ["--no-svd", "--no-kmeans", "--no-nmf"],
+    # # 1 Active (3 Disabled)
+    # "Init: Only SVD": ["--no-kmeans", "--no-nmf", "--no-greedy"],
+    # "Init: Only KMeans": ["--no-svd", "--no-nmf", "--no-greedy"],
+    # "Init: Only NMF": ["--no-svd", "--no-kmeans", "--no-greedy"],
+    # "Init: Only Greedy": ["--no-svd", "--no-kmeans", "--no-nmf"],
 
     # # --- 2. OTHER ABLATIONS & PARAMETERS ---
+    # "Param: Transpose": [],
     # "Param: No Transpose": ["--no-transpose"],
     
     # # Restart Strategies
+    # "Restart: Full (Ref)": [],
     # "Restart: Simple": ["--restart-mode", "SIMPLE"],
     
-    # # Crossover Strategies
+    # Crossover Strategies
+    # "Cross: Both (Ref)": [],
     # "Cross: Mean": ["--crossover", "MEAN"],
     # "Cross: Uniform": ["--crossover", "UNIFORM"],
     
     # # Mutation Strategies
-    # "Mut: Swap": ["--mutation-type", "SWAP"],
-    # "Mut: Greedy": ["--mutation-type", "GREEDY"],
-    # "Mut: Noise": ["--mutation-type", "NOISE"]
+    "Mut: All (Ref)": [],
+    "Mut: Swap": ["--mutation-type", "SWAP"],
+    "Mut: Greedy": ["--mutation-type", "GREEDY"],
+    "Mut: Noise": ["--mutation-type", "NOISE"],
+    "Mut: None": ["--mutation-type", "NONE"],
 }
 # ==============================================================
 
