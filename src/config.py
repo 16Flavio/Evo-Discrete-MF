@@ -15,6 +15,7 @@ class ConfigAblation:
         # --- RESTART STRATEGY ---
         # "FULL" = Smart Restart actuel (Soft -> Ruins -> Alien)
         # "SIMPLE" = Random Restart uniquement (Garder le meilleur + Random)
+        # "NONE" = Pas de restart du tout
         self.restart_mode = "FULL" 
         
         # --- PHASES ---
@@ -37,7 +38,7 @@ class ConfigAblation:
         self.factorization_mode = "IMF"
 
         # --- AFFICHAGE ---
-        self.debug_mode = False  # Si True, affiche des informations de debug supplémentaires
+        self.debug_mode = True  # Si True, affiche des informations de debug supplémentaires
 
     @classmethod
     def get_BMF_optimal(cls):
@@ -50,11 +51,11 @@ class ConfigAblation:
 
         conf.allow_transpose = True
 
-        conf.restart_mode = "SIMPLE"
+        conf.restart_mode = "NONE"
 
         conf.crossover_type = "UNIFORM"
         
-        conf.mutation_type = "GREEDY"
+        conf.mutation_type = "ALL"
 
         return conf
 
@@ -71,11 +72,11 @@ class ConfigAblation:
 
         conf.allow_transpose = True
 
-        conf.restart_mode = "FULL"
+        conf.restart_mode = "NONE"
 
         conf.crossover_type = "UNIFORM"
 
-        conf.mutation_type = "SWAP"
+        conf.mutation_type = "ALL"
 
         return conf
 

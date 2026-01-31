@@ -288,7 +288,9 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     global_best_H = None
     global_best_f = float('inf')
 
-    STAGNATION_LIMIT = 50
+    if config.debug_mode:
+        print("Debug Mode Activated: Detailed logs will be shown.")
+        print("Initial Population Generation...")
 
     # --- 1. INITIALISATION ---
     pop_W_list = generate_population_W(X, r, N, LW, UW, LH, UH, config=config, verbose=False)
@@ -300,7 +302,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         H_opt, f = optimizeHforW(X_f, W_opt, H_rand, LW, UW, LH, UH, config=config)
 
         # W_opt, H_opt, f = optimize_alternating_wrapper(
-        #     X_f, W_cand, H_rand, LW, UW, LH, UH, config=config, max_iters=iters
+        #     X_f, W_cand, H_rand, LW, UW, LH, UH, config=config, max_iters=iters, effort=eff
         # )
 
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
@@ -312,7 +314,9 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     if not population: return np.zeros((m,r)), np.zeros((r,n)), float('inf')
 
     if config.debug_mode:
-        print(f"[DEBUG] Initial Population Generated: {len(population)} individuals.")
+        print(f"Initial Population of size {len(population)} generated.")
+        print(f"Best initial fitness: {population[0][0]:.6f}")
+        print("Starting Main Evolutionary Loop...")
 
     # Init Global Best
     best_f = population[0][0]
@@ -364,6 +368,9 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         if config.debug_mode and iteration % 50 == 0:
             print(f"[DEBUG] Iteration {iteration}, Best Fitness: {best_f:.6f}, Population Size: {len(population)}, Phase: {current_phase}")
         
+        if config.debug_mode and iteration % 50 == 0:
+            print(f"Iteration {iteration}: Best Fitness = {best_f:.6f}, Population Size = {len(population)}, Phase = {current_phase}, Stagnation = {stagnation_counter}, Restart Count = {restart_count}")
+
         # A. Changement de Phase
         switch_triggered = False
         #if stagnation_counter > 10: switch_triggered = True
@@ -394,7 +401,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         # C. Evolution
         temp_hashes = set() 
         children = generateNewGeneration(
-            temp_hashes, population, N//3, active_X, 
+            temp_hashes, population, N//5, active_X, 
             G_L, G_U, P_L, P_U, 
             start_time, TIME_LIMIT, int(tournament_size), float(mutation_rate),
             config=config
@@ -408,19 +415,12 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 W_child, H_child = child[1]
                 population.append([f_child, (W_child, H_child)])
             
-            population.sort(key=lambda x: x[0])
-            population = population[:(N*8)//10]
+            # Dynamic Diversity Selection
+            population, _ = select_diverse_survivors(population, N, min_diff_percent)
 
-            while (len(population) < N):
-                W_rand = np.random.randint(G_L, G_U + 1, size=(active_X.shape[0], r))
-                if W_rand.tobytes() not in seen_hashes:
-                    H_rand = np.random.randint(P_L, P_U + 1, size=(r, active_X.shape[1]))
-                    H_opt, f = optimizeHforW(active_X, W_rand, H_rand, G_L, G_U, P_L, P_U, config=config)
-                    population.append([f, (W_rand, H_opt)])
-                    seen_hashes.add(W_rand.tobytes())
-                
-            population.sort(key=lambda x: x[0])
-            
+            # population.sort(key=lambda x: x[0])
+            # population = population[:N]
+
             current_best = population[0]
             
             # Mise à jour du meilleur local
@@ -446,10 +446,9 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                     global_best_W, global_best_H = best_W.copy(), best_H.copy()
 
                 # Intensification
-                
                 # W_c, H_c = current_best[1]
                 # W_boost, H_boost, f_boost = optimize_alternating_wrapper(
-                #     active_X.astype(float), W_c, H_c, G_L, G_U, P_L, P_U, config=config, max_iters=50
+                #     active_X.astype(float), W_c, H_c, G_L, G_U, P_L, P_U, config=config, max_iters=100, effort=3
                 # )
                 # if f_boost < best_f:
                 #      best_f = f_boost
@@ -474,40 +473,26 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         if global_best_f == 0:
             break
 
-        # E. Déclenchement du Restart
-        # if stagnation_counter >= STAGNATION_LIMIT:
-        #     print(f"!!! STAGNATION ({STAGNATION_LIMIT} iters) -> RESTART DE LA POPULATION !!!")
+        # E. Restart Logique (ADAPTIVE)
+        time_since_last_improv = current_time - last_improvement_time
+        
+        if time_since_last_improv > restart_threshold and config.restart_mode != "NONE":
+
+            if config.debug_mode:
+                print(f"Restart Triggered at Iteration {iteration} after {time_since_last_improv:.2f}s of stagnation.")
+
+            restart_count += 1
+            restart_threshold = max(5.0, restart_threshold * 0.8)
             
         #     # 1. Sauvegarde de l'élite (le meilleur absolu)
         #     elite_f = global_best_f
         #     elite_W = global_best_W.copy()
         #     elite_H = global_best_H.copy()
             
-        #     # 2. Génération d'une nouvelle population aléatoire (taille - 1)
-        #     # On utilise current_target pour respecter la phase (transposée ou non)
-        #     new_Ws = generate_population_W(
-        #         active_X, r, N - 1, 
-        #         G_L, G_U, P_L, P_U, config=config
-        #     )
-            
-        #     new_pop = []
-        #     for W in new_Ws:
-        #         # Optimisation locale rapide pour rendre les nouveaux individus viables
-        #         H_rand = np.random.randint(P_L, P_U + 1, size=(r, active_X.shape[1]))
-        #         H, f = optimizeHforW(active_X, W, H_rand, G_L, G_U, P_L, P_U, config=config)
-        #         new_pop.append([f, (W, H)])
-            
-        #     # 3. Réinjection de l'élite
-        #     new_pop.append([elite_f, (elite_W, elite_H)])
-            
-        #     # 4. Remplacement de la population
-        #     population = new_pop
-        #     population.sort(key=lambda x: x[0])
-            
-        #     # 5. Reset compteur
-        #     stagnation_counter = 0
-            
-        #     print(f"--> Restart terminé. Best fitness maintenu: {elite_f:.6f}")
+            last_improvement_time = time.time()
+            stagnation_counter = 0
+            curr_mut = mutation_rate; curr_tourn = tournament_size
+            min_diff_percent = 0.005
 
         # --- DATA RECORDING (For Final Plot) ---
         trace_iter.append(iteration)
@@ -531,4 +516,8 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     if final_f < global_best_f:
         global_best_W, global_best_H, global_best_f = final_W, final_H, final_f
 
-    return global_best_W, global_best_H, round(global_best_f)
+    if config.debug_mode:
+        print(f"Metaheuristic completed in {time.time() - start_time:.2f}s over {iteration} iterations.")
+        print(f"Global Best Fitness: {global_best_f:.6f}")
+
+    return global_best_W, global_best_H, global_best_f

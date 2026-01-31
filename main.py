@@ -41,7 +41,7 @@ def main():
     parser.add_argument("--crossover", type=str, choices=['UNIFORM', 'MEAN', 'BOTH'], default='BOTH',
                         help="Type de Crossover : UNIFORM (mélange) ou MEAN (moyenne)")
     
-    parser.add_argument("--restart-mode", type=str, choices=['FULL', 'SIMPLE'], default='FULL', 
+    parser.add_argument("--restart-mode", type=str, choices=['FULL', 'SIMPLE', 'NONE'], default='FULL', 
                         help="Stratégie de restart : FULL (Smart) ou SIMPLE (Random)")
     
     parser.add_argument("--no-transpose", action="store_true", help="Désactiver le changement de phase (Transpose)")
@@ -67,11 +67,6 @@ def main():
     config = ConfigAblation()
     config.factorization_mode = args.factorization_mode
 
-    if args.factorization_mode == "BMF":
-        config = ConfigAblation.get_BMF_optimal()
-    elif args.factorization_mode == "IMF":
-        config = ConfigAblation.get_IMF_optimal()
-
     if args.no_svd: config.use_svd = False
     if args.no_kmeans: config.use_kmeans = False
     if args.no_nmf: config.use_nmf = False
@@ -83,6 +78,11 @@ def main():
     if args.debug_mode: config.debug_mode = True
     config.mutation_type = args.mutation_type
     
+    if args.factorization_mode == "BMF":
+        config = ConfigAblation.get_BMF_optimal()
+    elif args.factorization_mode == "IMF":
+        config = ConfigAblation.get_IMF_optimal()
+
     print(f"\n=== Lancement Evo-Discrete-MF ===")
     print(f"Input: {args.input}")
     print(f"Config Active: {config}\n")

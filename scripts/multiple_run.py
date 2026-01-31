@@ -16,33 +16,33 @@ def run_benchmark(num_trials=30):
     #     "--output", "results/imf_matrix/Houdain_547x745_m1616m1616_r10_30sec.txt",
     #     "--rank", "10",
     #     "--time", "30.0",
-    #     "-n", "61",
+    #     "-n", "30",
     #     "-s", "3",
     #     "-m", "0.383",
     #     "--factorization-mode", "IMF",
     # ]
 
-    # params = [
-    #     "--input", "data/bmf_matrix/lymp.txt",
-    #     "--output", "results/bmf_matrix/lymp_r10_30sec.txt",
-    #     "--rank", "10",
-    #     "--time", "30.0",
-    #     "-n", "61",
-    #     "-s", "3",
-    #     "-m", "0.9",
-    #     "--factorization-mode", "BMF",
-    # ]
-
     params = [
-        "--input", "data/bmf_matrix/binarizedCBCL.txt",
-        "--output", "results/bmf_matrix/binarizedCBCL_r10_30sec.txt",
+        "--input", "data/bmf_matrix/lymp.txt",
+        "--output", "results/bmf_matrix/lymp_r10_30sec.txt",
         "--rank", "10",
         "--time", "30.0",
-        "-n", "61",
+        "-n", "60",
         "-s", "3",
         "-m", "0.383",
         "--factorization-mode", "BMF",
     ]
+
+    # params = [
+    #     "--input", "data/bmf_matrix/binarizedCBCL.txt",
+    #     "--output", "results/bmf_matrix/binarizedCBCL_r10_30sec.txt",
+    #     "--rank", "10",
+    #     "--time", "30.0",
+    #     "-n", "60",
+    #     "-s", "3",
+    #     "-m", "0.383",
+    #     "--factorization-mode", "BMF",
+    # ]
     
     error_pattern = re.compile(r"Fitness Solver\s*:\s*([0-9]*\.?[0-9]+)", re.IGNORECASE)
     errors = []

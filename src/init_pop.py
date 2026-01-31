@@ -272,9 +272,19 @@ def generate_population_W(X, r, N, LW, UW, LH, UH, config=None, verbose=False, p
             population_W.append(W_opt)
             seen_hashes.add(W_opt.tobytes())
 
+    for _ in range(int(N * 0.35)):
+        if len(population_W) >= N: break
+        W_samp = initialize_column_sampling(X, r, LW, UW)
+        if np.random.rand() < 0.3:
+            c1, c2 = np.random.randint(0, r, 2)
+            W_samp[:, [c1, c2]] = W_samp[:, [c2, c1]]
+        
+        if W_samp.tobytes() not in seen_hashes:
+             population_W.append(W_samp); seen_hashes.add(W_samp.tobytes())
+
     seeds = [w for w in population_W]
     idx = 0
-    while len(population_W) < N//2:
+    while len(population_W) < int(N*0.85):
         if not seeds: break
         base = seeds[idx % len(seeds)]
         idx += 1
