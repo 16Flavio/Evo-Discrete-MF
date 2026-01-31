@@ -152,16 +152,13 @@ def generate_antithetic_W(W, LW, UW):
     """
     return (UW + LW) - W
 
-def optimizeH(X, W, H, LH, UH):
+def optimizeH(X, WtW, WtX, H, LH, UH):
     """
     Optimizes H given fixed W using a simple least squares approach.
     Rounds and clips the results to integer bounds.
     """
     m, n = X.shape
-    r = W.shape[1]
-
-    WtW = W.T @ W
-    WtX = W.T @ X
+    r = H.shape[1]
     
     for k in range(H.shape[0]):
         hk = (WtX[k, :] - (WtW[k, :] @ H) + WtW[k, k] * H[k, :]) / (WtW[k, k] + 1e-16)
@@ -179,14 +176,38 @@ def als_bound(X, r, W_init, H_init, LW, UW, LH, UH, max_iter=10):
     W = W_init.astype(float)
     H = H_init.astype(float)
     
-    for iter in range(max_iter):
+    norm_X_sq = np.sum(X**2)
+
+    prev_error = float('inf')
+
+    iter = 0
+    while(iter < max_iter):
         # Update H
-        optimizeH(X, W, H, LH, UH)
+
+        WtW = W.T @ W
+        WtX = W.T @ X
+
+        H = optimizeH(X, WtW, WtX, H, LH, UH)
         
         # Update W
-        optimizeH(X.T, H.T, W.T, LW, UW)
+
+        HHt = H @ H.T
+        HXt = H @ X.T
+
+        W = optimizeH(X.T, HHt, HXt, W.T, LW, UW).T
+
+        WtW = W.T @ W
+        WtX = W.T @ X
+
+        error = norm_X_sq - 2 * np.sum(WtX * H) + np.sum(WtW * HHt)
+
+        if abs(prev_error - error) < 1e-5:
+            break
+        prev_error = error
+
+        iter += 1
     
-    return W.astype(int), H.astype(int)
+    return W, H
 
 # --- POPULATION GENERATION ---
 
@@ -261,10 +282,10 @@ def generate_population_W(X, r, N, LW, UW, LH, UH, config=None, verbose=False, p
     #     if W_new.tobytes() not in seen_hashes:
     #          population_W.append(W_new); seen_hashes.add(W_new.tobytes())
 
-    for _ in range(N//10):
+    for _ in range((N*3)//10):
         W_rand = np.random.randint(LW, UW + 1, size=(m, r))
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
-        W_opt, H_opt = als_bound(X, r, W_rand.astype(float), H_rand.astype(float), LW, UW, LH, UH, max_iter=10)
+        W_opt, H_opt = als_bound(X, r, W_rand.astype(float), H_rand.astype(float), LW, UW, LH, UH, max_iter=1000)
 
         W_opt = np.round(W_opt).astype(int)
 
@@ -272,7 +293,7 @@ def generate_population_W(X, r, N, LW, UW, LH, UH, config=None, verbose=False, p
             population_W.append(W_opt)
             seen_hashes.add(W_opt.tobytes())
 
-    for _ in range(int(N * 0.35)):
+    for _ in range(int(N)//10):
         if len(population_W) >= N: break
         W_samp = initialize_column_sampling(X, r, LW, UW)
         if np.random.rand() < 0.3:
@@ -284,7 +305,7 @@ def generate_population_W(X, r, N, LW, UW, LH, UH, config=None, verbose=False, p
 
     seeds = [w for w in population_W]
     idx = 0
-    while len(population_W) < int(N*0.85):
+    while len(population_W) < int(N*8)//10 :
         if not seeds: break
         base = seeds[idx % len(seeds)]
         idx += 1

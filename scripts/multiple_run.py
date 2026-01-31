@@ -18,7 +18,7 @@ def run_benchmark(num_trials=30):
     #     "--time", "30.0",
     #     "-n", "50",
     #     "-s", "3",
-    #     "-m", "0.4",
+    #     "-m", "0.3",
     #     "--factorization-mode", "IMF",
     # ]
 
@@ -29,9 +29,20 @@ def run_benchmark(num_trials=30):
         "--time", "30.0",
         "-n", "50",
         "-s", "3",
-        "-m", "0.4",
+        "-m", "0.3",
         "--factorization-mode", "BMF",
     ]
+
+    # params = [
+    #     "--input", "data/bmf_matrix/lymp.txt",
+    #     "--output", "results/bmf_matrix/lymp_r10_5min.txt",
+    #     "--rank", "10",
+    #     "--time", "300.0",
+    #     "-n", "50",
+    #     "-s", "3",
+    #     "-m", "0.3",
+    #     "--factorization-mode", "BMF",
+    # ]
 
     # params = [
     #     "--input", "data/bmf_matrix/binarizedCBCL.txt",
@@ -40,7 +51,7 @@ def run_benchmark(num_trials=30):
     #     "--time", "30.0",
     #     "-n", "50",
     #     "-s", "3",
-    #     "-m", "0.4",
+    #     "-m", "0.3",
     #     "--factorization-mode", "BMF",
     # ]
     
