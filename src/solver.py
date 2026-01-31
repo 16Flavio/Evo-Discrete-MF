@@ -37,46 +37,15 @@ def transpose_population(pop):
     """
     return [transpose_individual(p) for p in pop]
 
-def select_diverse_survivors(X, population, N, LW, UW, LH, UH, current_phase, config, min_diff_percent=0.001):
+def select_diverse_survivors(population, N, min_diff_percent=0.001):
     """
     Selects the top N survivors from the population, ensuring diversity.
     It prioritizes the best solutions but skips those that are too similar to already selected ones
     based on a minimum difference percentage.
     """
-
-    m, n = X.shape
-    r = population[0][1][0].shape[1]
-
-    seen_hashes = set()
-
     population.sort(key=lambda x: x[0])
-    # if min_diff_percent <= 0 or not population:
-    #     return population[:N], len(population)
-
-    # return population[:N], len(population)
-
-    population = population[:(N*8)//10]
-
-    population_W = []
-
-    while len(population) + len(population_W) < N - 1:
-        W_rand = np.random.randint(LW, UW + 1, size=(m, r))
-        if W_rand.tobytes() not in seen_hashes:
-            population_W.append(W_rand)
-            seen_hashes.add(W_rand.tobytes())
-
-    w_ant = generate_antithetic_W(population[0][1][0], LW, UW)
-    if w_ant.tobytes() not in seen_hashes:
-        population_W.append(w_ant)
-        seen_hashes.add(w_ant.tobytes())
-
-    for W in population_W:
-        H, f = optimizeHforW(X, W, np.random.randint(LH, UH + 1, size=(r, n)), LW, UW, LH, UH, config=config)
-        population.append([f, (W, H)])
-
-    population.sort(key=lambda x: x[0])
-
-    return population, len(population)
+    if min_diff_percent <= 0 or not population:
+        return population[:N], len(population)
 
     survivors = []
     survivors.append(population[0]) 
@@ -368,9 +337,6 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         if config.debug_mode and iteration % 50 == 0:
             print(f"[DEBUG] Iteration {iteration}, Best Fitness: {best_f:.6f}, Population Size: {len(population)}, Phase: {current_phase}")
         
-        if config.debug_mode and iteration % 50 == 0:
-            print(f"Iteration {iteration}: Best Fitness = {best_f:.6f}, Population Size = {len(population)}, Phase = {current_phase}, Stagnation = {stagnation_counter}, Restart Count = {restart_count}")
-
         # A. Changement de Phase
         switch_triggered = False
         #if stagnation_counter > 10: switch_triggered = True
@@ -401,7 +367,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         # C. Evolution
         temp_hashes = set() 
         children = generateNewGeneration(
-            temp_hashes, population, N//5, active_X, 
+            temp_hashes, population, N//3, active_X, 
             G_L, G_U, P_L, P_U, 
             start_time, TIME_LIMIT, int(tournament_size), float(mutation_rate),
             config=config
@@ -504,10 +470,6 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     
     final_W, final_H, final_f = global_best_W, global_best_H, global_best_f
 
-    if config.debug_mode:
-        print(f"[DEBUG] Metaheuristic Finished. Final Best Fitness before polishing: {final_f:.6f}")
-        print(f"[DEBUG] Iterations: {iteration}, Time Elapsed: {time.time() - start_time:.2f}s")
-
     if remaining > 1.0:
         final_W, final_H, final_f = optimize_alternating_wrapper(
             X_f, final_W, final_H, LW, UW, LH, UH, config=config, max_iters=2000, time_limit=remaining
@@ -517,7 +479,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         global_best_W, global_best_H, global_best_f = final_W, final_H, final_f
 
     if config.debug_mode:
-        print(f"Metaheuristic completed in {time.time() - start_time:.2f}s over {iteration} iterations.")
-        print(f"Global Best Fitness: {global_best_f:.6f}")
+        print(f"[DEBUG] Metaheuristic completed in {time.time() - start_time:.2f}s over {iteration} iterations.")
+        print(f"[DEBUG] Global Best Fitness: {global_best_f:.6f}")
 
     return global_best_W, global_best_H, global_best_f
