@@ -37,52 +37,121 @@ def transpose_population(pop):
     """
     return [transpose_individual(p) for p in pop]
 
-def select_diverse_survivors(population, N, min_diff_percent=0.001):
+def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=1, LH=0, UH=1, config=None):
     """
-    Selects the top N survivors from the population, ensuring diversity.
-    It prioritizes the best solutions but skips those that are too similar to already selected ones
-    based on a minimum difference percentage.
+    AMÉLIORÉ : Sélectionne les N meilleurs survivants diversifiés.
+    Si la diversité est insuffisante, remplit le reste avec des mutations (Immigration)
+    plutôt que de remettre les doublons.
     """
+
+    m, n = X.shape
+
+    # 1. Tri par fitness (du meilleur au pire)
     population.sort(key=lambda x: x[0])
-    if min_diff_percent <= 0 or not population:
-        return population[:N], len(population)
+    
+    if not population:
+        return population, 0
 
     survivors = []
     survivors.append(population[0]) 
     
+    # Récupération des dimensions pour le calcul de distance
     m, r = population[0][1][0].shape
     min_pixels = int(m * r * min_diff_percent)
     if min_pixels < 1: min_pixels = 1
     
-    check_limit = 20
+    # --- AMÉLIORATION 1 : Lookback Dynamique ---
+    # Au lieu de 20 fixe, on regarde 20% des survivants actuels (borné entre 5 et 50)
+    # Cela permet de scaler si N devient très grand.
     
+    processed_count = 0
+    
+    # 2. Filtrage Glouton (Clearing)
     for i in range(1, len(population)):
         if len(survivors) >= N: break
+        
         candidate = population[i]
         W_cand = candidate[1][0]
+        
         is_distinct = True
-        start_check = max(0, len(survivors) - check_limit)
+        
+        # Fenêtre de vérification dynamique
+        check_window = max(5, int(len(survivors) * 0.2))
+        check_window = min(50, check_window) # Plafond pour la perf
+        
+        start_check = max(0, len(survivors) - check_window)
+        
         for k in range(start_check, len(survivors)):
             survivor = survivors[k]
+            
+            # Utilisation de la distance alignée (C++ ou Python)
             if USE_CPP_DIST:
                 dist = get_aligned_distance(survivor[1][0].astype(np.int32), W_cand.astype(np.int32))
             else:
                 dist = get_distance_py(survivor[1][0], W_cand)
+                
             if dist < min_pixels:
                 is_distinct = False
                 break
+        
         if is_distinct:
             survivors.append(candidate)
+            
+    num_natural_survivors = len(survivors)
 
-    if len(survivors) < N:
-        survivor_ids = {id(p) for p in survivors}
-        for p in population:
-            if len(survivors) >= N: break
-            if id(p) not in survivor_ids:
-                survivors.append(p)
-                survivor_ids.add(id(p))
+    # --- AMÉLIORATION 2 : Remplissage par Immigration (et non par clones) ---
+    # Si on n'a pas atteint N, c'est que la population stagne.
+    # On génère de nouveaux individus en perturbant les meilleurs survivants trouvés.
     
-    return survivors, len(survivors)
+    if len(survivors) < N:
+
+        W_pop = generate_population_W(X, r, N - len(survivors), LW, UW, LH, UH, config=config, verbose=False)
+
+        for W_new in W_pop:
+            
+            parent_W, parent_H = survivors[np.random.randint(0, num_natural_survivors)][1]
+            
+            # Optimisation rapide avec le nouveau W
+            W_opt, H_opt, f_new = optimize_alternating_wrapper(
+                X, W_new, parent_H.copy(), LW, UW, LH, UH, config=config, max_iters=2
+            )
+            
+            survivors.append([f_new, (W_opt, H_opt)])
+
+    # if len(survivors) < N:
+    #     # On cycle sur les meilleurs survivants pour générer des mutants
+    #     idx_parent = 0
+    #     while len(survivors) < N:
+    #         parent_W, parent_H = survivors[idx_parent % num_natural_survivors][1]
+    #         f_parent = survivors[idx_parent % num_natural_survivors][0]
+            
+    #         # Plus on descend dans la liste, plus on mute fort
+    #         mutation_intensity = 0.1 + (0.4 * (len(survivors) / N)) # Entre 10% et 50%
+            
+    #         # On crée un mutant de W
+    #         W_new = perturb_W(parent_W, mutation_intensity, LW, UW)
+            
+    #         # H_new, f_new = optimizeHforW(X, W_new, parent_H.copy(), LW, UW, LH, UH, config=config)
+
+    #         W_new, H_new, f_new = optimize_alternating_wrapper(X, W_new, parent_H.copy(), LW, UW, LH, UH, config=config, max_iters=2)
+
+    #         # On garde le H du parent (ou on pourrait le randomiser)
+    #         # Pour l'instant, on garde H pour conserver une certaine qualité ("Inherited Fitness")
+    #         # Mais attention, la fitness f_parent n'est plus exacte pour W_new.
+    #         # Dans l'idéal, il faudrait réévaluer, mais pour gagner du temps, on l'ajoute tel quel
+    #         # et il sera optimisé/évalué à la prochaine génération.
+    #         # Astuce : On met une fitness "dégradée" pour qu'il ne soit pas élite tout de suite
+            
+    #         survivors.append([f_new, (W_new, H_new)])
+            
+    #         idx_parent += 1
+
+    #         # parent_W = np.random.randint(LW, UW + 1, size=(m,r))
+    #         # parent_H, f = optimizeHforW(X, parent_W, np.random.randint(LH, UH + 1, size=(r,n)), LW, UW, LH, UH, config=config)
+
+    #         # survivors.append([f, (parent_W, parent_H)])
+
+    return survivors, num_natural_survivors
 
 def ruin_and_recreate(W, G_L, G_U, ruin_percent=0.2):
     """
@@ -264,15 +333,18 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     # --- 1. INITIALISATION ---
     pop_W_list = generate_population_W(X, r, N, LW, UW, LH, UH, config=config, verbose=False)
     
+    if config.debug_mode:
+        print(f"Generated {len(pop_W_list)} initial W matrices.")
+
     for i, W_opt in enumerate(pop_W_list):
         if time.time() - start_time > TIME_LIMIT - 5: break
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
         
-        H_opt, f = optimizeHforW(X_f, W_opt, H_rand, LW, UW, LH, UH, config=config)
+        # H_opt, f = optimizeHforW(X_f, W_opt, H_rand, LW, UW, LH, UH, config=config)
 
-        # W_opt, H_opt, f = optimize_alternating_wrapper(
-        #     X_f, W_cand, H_rand, LW, UW, LH, UH, config=config, max_iters=iters, effort=eff
-        # )
+        W_opt, H_opt, f = optimize_alternating_wrapper(
+            X_f, W_opt, H_rand, LW, UW, LH, UH, config=config, max_iters=2
+        )
 
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
         if child_hash not in seen_hashes:
@@ -351,7 +423,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 population = transpose_population(population)
             iters_in_phase = 0
             stagnation_counter = max(0, stagnation_counter - 5)
-            min_diff_percent = min(0.05, min_diff_percent * 1.5)
+            min_diff_percent = min(0.01, min_diff_percent * 1.5)
         elif switch_triggered and not config.allow_transpose:
             stagnation_counter = 0
             iters_in_phase = 0
@@ -382,7 +454,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 population.append([f_child, (W_child, H_child)])
             
             # Dynamic Diversity Selection
-            population, _ = select_diverse_survivors(population, N, min_diff_percent)
+            population, _ = select_diverse_survivors(active_X, population, N, min_diff_percent, G_L, G_U, P_L, P_U, config)
 
             # population.sort(key=lambda x: x[0])
             # population = population[:N]
@@ -458,7 +530,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
             last_improvement_time = time.time()
             stagnation_counter = 0
             curr_mut = mutation_rate; curr_tourn = tournament_size
-            min_diff_percent = 0.005
+            min_diff_percent = 0.001
 
         # --- DATA RECORDING (For Final Plot) ---
         trace_iter.append(iteration)

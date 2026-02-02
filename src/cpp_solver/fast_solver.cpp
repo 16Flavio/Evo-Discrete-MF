@@ -557,10 +557,9 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
             double prob_p1 = 0.5; // Par défaut si total_f est 0 (ex: solution parfaite)
             
             // Sécurité pour éviter la division par zéro
-            if (total_f > 1e-16) {
-                // Formule inversée pour la minimisation
-                prob_p1 = f2 / total_f; 
-            }
+            // if (total_f > 1e-16) {
+            //     prob_p1 = f2 / total_f; 
+            // }
             
             // Optionnel : Clamper la probabilité pour garder un minimum de diversité
             // Empêcher qu'un parent écrase totalement l'autre (ex: garder entre 10% et 90%)
@@ -721,15 +720,14 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
 
             // MatrixXi W = Child_W.cast<int>();
             // if(mode_opti == "IMF") {
-            //     MatrixXd W_float = W.cast<double>();
-            //     f_obj = solve_matrix_imf(X, W_float, Child_H, LH, UH, 1);
+            //     f_obj = solve_matrix_imf(X, W, Child_H, LH, UH);
             // } else if(mode_opti == "BMF") {
             //     f_obj = solve_matrix_bmf(X, W, Child_H, LH, UH);
             // } else if(mode_opti == "RELU") {
             //     f_obj = solve_matrix_relu(X, W, Child_H, LH, UH);
             // }
 
-            int max_iters_child = 5; 
+            int max_iters_child = 2; 
             for(int iter=0; iter<max_iters_child; ++iter) {
                 // EXPLICIT CASTING 
                 MatrixXi W = Child_W.cast<int>(); 

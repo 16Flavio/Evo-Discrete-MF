@@ -54,7 +54,7 @@ def initialize_greedy_residual(X, r, LW, UW, LH, UH):
             
     return W.astype(int)
 
-# --- 3. COLUMN SAMPLING ---
+# --- 3. COLUMN SAMPLING --- Essayer d'enlever les probas pondérés 
 def initialize_column_sampling(X, r, LW, UW):
     """
     Initializes W by sampling columns from X based on their norms.
@@ -282,10 +282,10 @@ def generate_population_W(X, r, N, LW, UW, LH, UH, config=None, verbose=False, p
     #     if W_new.tobytes() not in seen_hashes:
     #          population_W.append(W_new); seen_hashes.add(W_new.tobytes())
 
-    for _ in range((N*3)//10):
+    for _ in range((N*25)//100):
         W_rand = np.random.randint(LW, UW + 1, size=(m, r))
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
-        W_opt, H_opt = als_bound(X, r, W_rand.astype(float), H_rand.astype(float), LW, UW, LH, UH, max_iter=1000)
+        W_opt, H_opt = als_bound(X, r, W_rand.astype(float), H_rand.astype(float), LW, UW, LH, UH, max_iter=100)
 
         W_opt = np.round(W_opt).astype(int)
 
@@ -293,7 +293,7 @@ def generate_population_W(X, r, N, LW, UW, LH, UH, config=None, verbose=False, p
             population_W.append(W_opt)
             seen_hashes.add(W_opt.tobytes())
 
-    for _ in range(int(N)//10):
+    for _ in range(int(N*25)//100):
         if len(population_W) >= N: break
         W_samp = initialize_column_sampling(X, r, LW, UW)
         if np.random.rand() < 0.3:
