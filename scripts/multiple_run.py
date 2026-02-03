@@ -18,7 +18,18 @@ def run_benchmark(num_trials=30):
     #     "--time", "30.0",
     #     "-n", "50",
     #     "-s", "3",
-    #     "-m", "0.3",
+    #     "-m", "0.0",
+    #     "--factorization-mode", "IMF",
+    # ]
+
+    # params = [
+    #     "--input", "data/imf_matrix/Houdain_547x745_m1616m1616.txt",
+    #     "--output", "results/imf_matrix/Houdain_547x745_m1616m1616_r10_5min.txt",
+    #     "--rank", "10",
+    #     "--time", "300.0",
+    #     "-n", "50",
+    #     "-s", "3",
+    #     "-m", "0.0",
     #     "--factorization-mode", "IMF",
     # ]
 
@@ -29,7 +40,7 @@ def run_benchmark(num_trials=30):
         "--time", "30.0",
         "-n", "50",
         "-s", "3",
-        "-m", "0.3",
+        "-m", "0.0",
         "--factorization-mode", "BMF",
     ]
 
@@ -40,7 +51,7 @@ def run_benchmark(num_trials=30):
     #     "--time", "300.0",
     #     "-n", "50",
     #     "-s", "3",
-    #     "-m", "0.3",
+    #     "-m", "0.0",
     #     "--factorization-mode", "BMF",
     # ]
 
@@ -51,7 +62,7 @@ def run_benchmark(num_trials=30):
     #     "--time", "30.0",
     #     "-n", "50",
     #     "-s", "3",
-    #     "-m", "0.3",
+    #     "-m", "0.0",
     #     "--factorization-mode", "BMF",
     # ]
     

@@ -76,8 +76,7 @@ def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=
         is_distinct = True
         
         # Fenêtre de vérification dynamique
-        check_window = max(5, int(len(survivors) * 0.2))
-        check_window = min(50, check_window) # Plafond pour la perf
+        check_window = max(20, int(len(survivors) * 0.5))
         
         start_check = max(0, len(survivors) - check_window)
         
@@ -102,64 +101,51 @@ def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=
     # --- AMÉLIORATION 2 : Remplissage par Immigration (et non par clones) ---
     # Si on n'a pas atteint N, c'est que la population stagne.
     # On génère de nouveaux individus en perturbant les meilleurs survivants trouvés.
-    
-    if len(survivors) < N:
-            
-        for candidate in survivors:
-            W_new = generate_antithetic_W(candidate[1][0], LW, UW)
 
-            H_new = np.random.randint(LH, UH + 1, size=(r, n))
-            H_new, f_new = optimizeHforW(X, W_new, H_new, LW, UW, LH, UH, config=config)
-
-            survivors.append([f_new, (W_new, H_new)])
-
-            if len(survivors) >= N:
-                break
+    while len(survivors) < N:
+        # 1. Génération d'un pool de candidats (ex: 10 candidats par place libre)
+        num_candidates = 10
+        candidates = []
+        for _ in range(num_candidates):
+            # Génération purement aléatoire
+            W_cand = np.random.randint(LW, UW + 1, size=(m, r))
+            candidates.append(W_cand)
         
-        while len(survivors) < N:
-            W_new = np.random.randint(LW, UW + 1, size=(m, r))
+        # 2. Sélection du candidat le plus "isolé" (Loin des top élites)
+        # On compare seulement aux 5-10 meilleurs pour la rapidité
+        reference_population = [s[1][0] for s in survivors[:min(len(survivors), 10)]]
+        
+        best_W_far = candidates[0]
+        max_min_distance = -1
+        
+        for W_c in candidates:
+            # Calcul de la distance minimale par rapport au groupe de référence
+            # On cherche le point qui maximise cette distance minimale (Maximin)
+            min_dist_to_group = float('inf')
             
-            H_new = np.random.randint(LH, UH + 1, size=(r, n))
-            H_new, f_new = optimizeHforW(X, W_new, H_new, LW, UW, LH, UH, config=config)
-
-            # W_new, H_new, f_new = optimize_alternating_wrapper(X, W_new, 
-            #                                                   np.random.randint(LH, UH + 1, size=(r, n)), 
-            #                                                   LW, UW, LH, UH, 
-            #                                                   config=config, max_iters=5)
-            survivors.append([f_new, (W_new, H_new)])
-
-    # if len(survivors) < N:
-    #     # On cycle sur les meilleurs survivants pour générer des mutants
-    #     idx_parent = 0
-    #     while len(survivors) < N:
-    #         parent_W, parent_H = survivors[idx_parent % num_natural_survivors][1]
-    #         f_parent = survivors[idx_parent % num_natural_survivors][0]
+            for W_ref in reference_population:
+                if USE_CPP_DIST:
+                    d = get_aligned_distance(W_ref.astype(np.int32), W_c.astype(np.int32))
+                else:
+                    d = get_distance_py(W_ref, W_c)
+                
+                if d < min_dist_to_group:
+                    min_dist_to_group = d
             
-    #         # Plus on descend dans la liste, plus on mute fort
-    #         mutation_intensity = 0.1 + (0.4 * (len(survivors) / N)) # Entre 10% et 50%
-            
-    #         # On crée un mutant de W
-    #         W_new = perturb_W(parent_W, mutation_intensity, LW, UW)
-            
-    #         # H_new, f_new = optimizeHforW(X, W_new, parent_H.copy(), LW, UW, LH, UH, config=config)
-
-    #         W_new, H_new, f_new = optimize_alternating_wrapper(X, W_new, parent_H.copy(), LW, UW, LH, UH, config=config, max_iters=2)
-
-    #         # On garde le H du parent (ou on pourrait le randomiser)
-    #         # Pour l'instant, on garde H pour conserver une certaine qualité ("Inherited Fitness")
-    #         # Mais attention, la fitness f_parent n'est plus exacte pour W_new.
-    #         # Dans l'idéal, il faudrait réévaluer, mais pour gagner du temps, on l'ajoute tel quel
-    #         # et il sera optimisé/évalué à la prochaine génération.
-    #         # Astuce : On met une fitness "dégradée" pour qu'il ne soit pas élite tout de suite
-            
-    #         survivors.append([f_new, (W_new, H_new)])
-            
-    #         idx_parent += 1
-
-    #         # parent_W = np.random.randint(LW, UW + 1, size=(m,r))
-    #         # parent_H, f = optimizeHforW(X, parent_W, np.random.randint(LH, UH + 1, size=(r,n)), LW, UW, LH, UH, config=config)
-
-    #         # survivors.append([f, (parent_W, parent_H)])
+            if min_dist_to_group > max_min_distance:
+                max_min_distance = min_dist_to_group
+                best_W_far = W_c
+        
+        # 3. Intégration avec Optimisation "Légère"
+        # CRUCIAL : On optimise H pour que l'individu ait une fitness décente,
+        # MAIS on n'optimise PAS W (ou très peu) pour ne pas détruire sa diversité structurelle.
+        
+        H_new = np.random.randint(LH, UH + 1, size=(r, n))
+        
+        # On utilise optimizeHforW qui ne touche pas à W
+        H_final, f_final = optimizeHforW(X, best_W_far, H_new, LW, UW, LH, UH, config=config)
+        
+        survivors.append([f_final, (best_W_far, H_final)])
 
     return survivors, num_natural_survivors
 
@@ -353,7 +339,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         # H_opt, f = optimizeHforW(X_f, W_opt, H_rand, LW, UW, LH, UH, config=config)
 
         W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f, W_opt, H_rand, LW, UW, LH, UH, config=config, max_iters=2
+            X_f, W_opt, H_rand, LW, UW, LH, UH, config=config, max_iters=10
         )
 
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
@@ -484,7 +470,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 stagnation_counter = 0
                 last_improvement_time = current_time
                 restart_count = 0 
-                min_diff_percent = 0.001 
+                min_diff_percent = 0.001
                 
                 # Reset Restart Threshold on improvement
                 restart_threshold = max(10.0, base_restart_threshold * 0.75)

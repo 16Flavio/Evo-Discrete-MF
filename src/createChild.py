@@ -78,7 +78,7 @@ def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH,
         
         # children.sort(key=lambda x: x[0]) 
         # if children:
-        #     best_childs = children[:1]
+        #     best_childs = children[:3]
         #     for i, best_child in enumerate(best_childs):
         #         fitness, (W, H), p1, p2, d1, d2 = best_child
                 
@@ -86,7 +86,7 @@ def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH,
         #             X, 
         #             W, H, 
         #             LW, UW, LH, UH,
-        #             max_iters=100,
+        #             max_iters=50,
         #             config=config
         #         )
                 

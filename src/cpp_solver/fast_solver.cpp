@@ -582,10 +582,44 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
                 int idx = dist_idx(gen);
                 if (Pop_Fitness[idx] < best_f1) { best_f1 = Pop_Fitness[idx]; best_p1 = idx; }
             }
-            int best_p2 = -1; double best_f2 = 1e20;
+            
+            int best_p2 = -1; double best_f2 = 1e20;     // Le Vainqueur
+            int second_p2 = -1; double second_f2 = 1e20; // Le Dauphin
+
             for(int t=0; t<tournament_size; ++t) {
                 int idx = dist_idx(gen);
-                if (Pop_Fitness[idx] < best_f2) { best_f2 = Pop_Fitness[idx]; best_p2 = idx; }
+                double f = Pop_Fitness[idx];
+
+                if (f < best_f2) {
+                    // Le nouveau est meilleur que le 1er :
+                    // L'ancien 1er devient le 2ème (s'il n'est pas écrasé par le même index)
+                    if (idx != best_p2) { 
+                        second_f2 = best_f2;
+                        second_p2 = best_p2;
+                    }
+                    best_f2 = f;
+                    best_p2 = idx;
+                } 
+                else if (f < second_f2 && idx != best_p2) {
+                    // Le nouveau est moins bon que le 1er mais meilleur que le 2ème
+                    second_f2 = f;
+                    second_p2 = idx;
+                }
+            }
+
+            if (best_p2 == best_p1) {
+                if (second_p2 != -1) {
+                    // On prend le deuxième meilleur
+                    best_p2 = second_p2;
+                    best_f2 = second_f2;
+                } else {
+                    // Cas de secours (ex: tournoi avec un seul individu tiré plusieurs fois)
+                    // On prend un individu aléatoire différent
+                    if (pop_size > 1) {
+                        do { best_p2 = dist_idx(gen); } while (best_p2 == best_p1);
+                        best_f2 = Pop_Fitness[best_p2];
+                    }
+                }
             }
 
             MatrixXi W1 = Pop_W[best_p1];
@@ -610,9 +644,9 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
             
             double prob_p1 = 0.5; // Par défaut si total_f est 0 (ex: solution parfaite)
             
-            if (total_f > 1e-16) {
-                prob_p1 = f2 / total_f; 
-            }
+            // if (total_f > 1e-16) {
+            //     prob_p1 = f2 / total_f; 
+            // }
 
             prob_p1 = std::max(0.1, std::min(0.9, prob_p1));
 
@@ -655,11 +689,10 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
             double f_obj = 0.0;
 
             tuple<MatrixXi, MatrixXi, double> opt_result;
-
-            opt_result= optimize_alternating_cpp(
+            opt_result = optimize_alternating_cpp(
                 X, Child_W, Child_H, 
                 LW, UW, LH, UH, 
-                10, 3600.0, mode_opti
+                50, 3600.0, mode_opti
             );
 
             tie(Child_W, Child_H, f_obj) = opt_result;
@@ -693,6 +726,15 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
             //     }
                 
             //     Child_W = WT.transpose();
+            // }
+
+            // MatrixXi W = Child_W.cast<int>(); 
+            // if(mode_opti == "IMF") {
+            //     f_obj = solve_matrix_imf(X, W, Child_H, LH, UH);
+            // } else if(mode_opti == "BMF") {
+            //     f_obj = solve_matrix_bmf(X, W, Child_H, LH, UH);
+            // } else if(mode_opti == "RELU") {
+            //     f_obj = solve_matrix_relu(X, W, Child_H, LH, UH);
             // }
 
             int dist_p1 = count_diff(Child_W, W1);
