@@ -144,64 +144,6 @@ double findmin_relu_exact(const VectorXd& a_vec, const VectorXd& b_vec, const Ve
     return xopt;
 }
 
-VectorXi k_best_search_qr(const ColPivHouseholderQR<MatrixXd>& qr, const MatrixXd& R, const VectorXd& y, int L, int U, int K_beam) {
-    int r = (int)R.rows();
-    std::vector<BeamNode> current_level;
-    current_level.push_back({0.0, std::vector<int>(r, 0)}); 
-    
-    for (int k = r - 1; k >= 0; --k) {
-        std::priority_queue<BeamNode> best_candidates;
-        
-        for (const auto& node : current_level) {
-            double val = y(k);
-            for (int j = k + 1; j < r; ++j) {
-                val -= R(k, j) * (double)node.h[j];
-            }
-            
-            double diag = R(k, k);
-            double center = 0.0;
-            if (std::abs(diag) > 1e-9) center = val / diag;
-            else center = (double)L;
-            
-            int center_int = (int)std::round(center);
-            
-            for (int offset = -2; offset <= 2; ++offset) {
-                int candidate_val = center_int + offset;
-                if (candidate_val < L || candidate_val > U) continue;
-                
-                double diff = (double)candidate_val - center;
-                double term_cost = diff * diff * diag * diag;
-                double new_total_cost = node.cost + term_cost;
-                
-                BeamNode new_node = node;
-                new_node.cost = new_total_cost;
-                new_node.h[k] = candidate_val;
-                
-                if (best_candidates.size() < (size_t)K_beam) {
-                    best_candidates.push(new_node);
-                } else if (new_total_cost < best_candidates.top().cost) {
-                    best_candidates.pop();
-                    best_candidates.push(new_node);
-                }
-            }
-        }
-        
-        current_level.clear();
-        while(!best_candidates.empty()) {
-            current_level.push_back(best_candidates.top());
-            best_candidates.pop();
-        }
-    }
-    
-    if (current_level.empty()) return VectorXi::Constant(r, L);
-    
-    auto best_it = std::min_element(current_level.begin(), current_level.end(), 
-        [](const BeamNode& a, const BeamNode& b){ return a.cost < b.cost; });
-        
-    VectorXi z = VectorXi::Map(best_it->h.data(), r);
-    return qr.colsPermutation() * z;
-}
-
 void integer_cd_relu(const MatrixXd& W, const VectorXd& X_col, VectorXi& h_int, int L, int U, AcdWorkspace& ws, mt19937& gen) {
     int r = (int)h_int.size();
     VectorXd wh = W * h_int.cast<double>();
@@ -239,7 +181,7 @@ void integer_cd_imf(const MatrixXd& W, const VectorXd& W_norms_sq, const VectorX
     std::vector<int> indices(r);
     std::iota(indices.begin(), indices.end(), 0);
 
-    int max_passes = 3;
+    int max_passes = 20;
     for(int pass=0; pass<max_passes; ++pass) {
         std::shuffle(indices.begin(), indices.end(), gen);
         
@@ -323,33 +265,140 @@ double solve_matrix_relu(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Tar
 }
 
 double solve_matrix_imf(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Target, int L, int U) {
+    // 1. Préparation des données W
     MatrixXd W = Fixed.cast<double>();
     int n = (int)X.cols();
     int r = (int)Fixed.cols();
+    int m = (int)X.rows();
 
-    ColPivHouseholderQR<MatrixXd> qr(W);
-    MatrixXd R = qr.matrixQR().topRows(r).triangularView<Upper>();
-    int K_beam = 8; 
+    // -- Pré-calculs pour Coordinate Descent Continu --
+    MatrixXd G = W.transpose() * W; // Gram matrix r x r
+    VectorXd W_norms_sq = G.diagonal(); // Pour la descente entière rapide
 
-    VectorXd W_norms_sq = W.colwise().squaredNorm(); 
+    // -- Pré-calculs pour Babai Nearest Plane --
+    // Décomposition QR : W = Q * R
+    // Nous avons besoin de R (triangulaire supérieure) pour Babai.
+    // L'objectif de Babai est de trouver h entier minimisant || R h - Q^T x ||
+    // Astuce : Q^T x peut être calculé comme (R^T)^-1 * (W^T x)
+    // sans avoir besoin de stocker ou calculer explicitement la grande matrice Q (m x m).
+    
+    HouseholderQR<MatrixXd> qr(W);
+    // On extrait la partie triangulaire supérieure R.
+    // Note: Si m > r, HouseholderQR produit un R de taille m x r où les lignes r..m-1 sont nulles.
+    // Nous prenons juste le bloc r x r supérieur.
+    MatrixXd R_full = qr.matrixQR().triangularView<Upper>();
+    MatrixXd R = R_full.block(0, 0, r, r);
+    
+    // Inversion de R transposée pour projeter la cible dans l'espace de Babai
+    // R est petite (r x r), donc l'inversion est très rapide.
+    MatrixXd R_invT = MatrixXd::Identity(r, r);
+    bool use_babai = true;
+    
+    // Sécurité numérique si R est singulière
+    if(std::abs(R.determinant()) < 1e-10) {
+        use_babai = false; // Fallback sur CD pur si mal conditionné
+    } else {
+        R_invT = R.transpose().inverse();
+    }
+
     double total_error = 0.0;
 
     #pragma omp parallel reduction(+:total_error)
     {
         int thread_id = omp_get_thread_num();
         std::mt19937 gen(9781 + thread_id * 1337);
-
+        
         #pragma omp for 
         for (int j = 0; j < n; ++j) {
-            VectorXd X_col = X.col(j);
-            VectorXd y = qr.householderQ().transpose() * X_col;
+            VectorXd x = X.col(j);
+            VectorXd h_real = Target.col(j).cast<double>(); // Warm start
+            VectorXd p = W.transpose() * x; // Projection W^T x
 
-            VectorXi h_int = k_best_search_qr(qr, R, y, L, U, K_beam);
+            // ---------------------------------------------------------
+            // ÉTAPE 1 : Coordinate Descent Continu (avec contraintes)
+            // ---------------------------------------------------------
+            // Minimise 0.5 * h^T G h - p^T h
+            // Utile pour trouver le centre optimal global dans la boîte [L, U]
             
-            integer_cd_imf(W, W_norms_sq, X_col, h_int, L, U, gen);
+            int cd_cont_iter = 15;
+            for(int iter=0; iter<cd_cont_iter; ++iter) {
+                for(int k=0; k<r; ++k) {
+                    // Gradient partiel sans h_k:
+                    // Grad_k = (G*h)_k - p_k
+                    // Optimum sans contrainte: h_k = (p_k - sum_{j!=k} G_kj h_j) / G_kk
+                    // Formule rapide: h_new = h_old - (Grad_k / G_kk)
+                    
+                    double grad_k = G.row(k).dot(h_real) - p(k);
+                    double step = grad_k / G(k,k);
+                    double h_val = h_real(k) - step;
+                    
+                    // Projection sur la boîte
+                    h_real(k) = std::max((double)L, std::min((double)U, h_val));
+                }
+            }
 
-            Target.col(j) = h_int;
-            total_error += (X_col - W * h_int.cast<double>()).squaredNorm();
+            // ---------------------------------------------------------
+            // ÉTAPE 2 : Babai Nearest Plane (Hybride)
+            // ---------------------------------------------------------
+            // On compare deux candidats :
+            // 1. Babai Standard (Unconstrained Center): Vise le centre non-contraint.
+            // 2. Babai Guidé (Constrained Center): Vise le centre contraint h_real (via R*h_real).
+            
+            VectorXi h_best_babai(r);
+            double best_babai_cost = 1e20;
+            
+            if (use_babai) {
+                // --- Candidat 1 : Standard Babai ---
+                VectorXd y_target = R_invT * p; // Q^T x
+                VectorXi h_cand1(r);
+                for (int k = r - 1; k >= 0; --k) {
+                    double val = y_target(k);
+                    for (int i = k + 1; i < r; ++i) val -= R(k, i) * (double)h_cand1(i);
+                    double unconstrained = val / R(k, k);
+                    h_cand1(k) = std::max(L, std::min(U, (int)std::round(unconstrained)));
+                }
+                
+                h_best_babai = h_cand1;
+                best_babai_cost = (x - W * h_cand1.cast<double>()).squaredNorm();
+                
+                // --- Candidat 2 : Babai Guidé par h_real (NOUVEAU) ---
+                // Minimise || R(h - h_real) || en respectant le réseau
+                // C'est une forme de rounding conditionnel intelligent de h_real
+                VectorXd y_real = R * h_real; 
+                VectorXi h_cand2(r);
+                for (int k = r - 1; k >= 0; --k) {
+                    double val = y_real(k);
+                    for (int i = k + 1; i < r; ++i) val -= R(k, i) * (double)h_cand2(i);
+                    double unconstrained = val / R(k, k);
+                    h_cand2(k) = std::max(L, std::min(U, (int)std::round(unconstrained)));
+                }
+
+                // Si le candidat guidé est différent, on regarde s'il est meilleur
+                if (h_cand2 != h_cand1) {
+                    double cost2 = (x - W * h_cand2.cast<double>()).squaredNorm();
+                    if (cost2 < best_babai_cost) {
+                        h_best_babai = h_cand2;
+                        // best_babai_cost = cost2; // Pas nécessaire de maj pour la suite
+                    }
+                }
+
+            } else {
+                // Fallback si QR échoue : simple arrondi
+                h_best_babai = h_real.array().round().cast<int>().cwiseMax(L).cwiseMin(U);
+            }
+
+            // ---------------------------------------------------------
+            // ÉTAPE 3 : Integer Coordinate Descent (Refinement)
+            // ---------------------------------------------------------
+            // On part du meilleur candidat Babai
+            
+            VectorXi h_final = h_best_babai;
+            integer_cd_imf(W, W_norms_sq, x, h_final, L, U, gen);
+
+            // Sauvegarde et calcul erreur
+            Target.col(j) = h_final;
+            VectorXd resid = x - W * h_final.cast<double>();
+            total_error += resid.squaredNorm();
         }
     }
     return total_error;
@@ -378,7 +427,7 @@ double solve_matrix_bmf(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Targ
 
         bool improved = true;
         int iter = 0;
-        int max_iters = 10; 
+        int max_iters = 50;
 
         // Pré-calcul des indices des 1 dans chaque colonne de W pour aller vite
         // (Optionnel : si W est très creux, on pourrait le faire hors de la boucle j, 
@@ -497,6 +546,11 @@ void align_in_place(const MatrixXi& W1, MatrixXi& W2_to_align, MatrixXi& H2_to_a
     }
 }
 
+tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
+    MatrixXd X, MatrixXi W_init, MatrixXi H_init, 
+    int LW, int UW, int LH, int UH, 
+    int max_global_iters, double time_limit_seconds, string mode_opti);
+
 vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_batch(
     const MatrixXd& X, const vector<MatrixXi>& Pop_W, const vector<MatrixXi>& Pop_H,
     const vector<double>& Pop_Fitness, int num_children, int tournament_size,
@@ -556,14 +610,11 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
             
             double prob_p1 = 0.5; // Par défaut si total_f est 0 (ex: solution parfaite)
             
-            // Sécurité pour éviter la division par zéro
-            // if (total_f > 1e-16) {
-            //     prob_p1 = f2 / total_f; 
-            // }
-            
-            // Optionnel : Clamper la probabilité pour garder un minimum de diversité
-            // Empêcher qu'un parent écrase totalement l'autre (ex: garder entre 10% et 90%)
-            // prob_p1 = std::max(0.1, std::min(0.9, prob_p1)); 
+            if (total_f > 1e-16) {
+                prob_p1 = f2 / total_f; 
+            }
+
+            prob_p1 = std::max(0.1, std::min(0.9, prob_p1));
 
             for(int k=0; k<r; ++k) {
                 // On tire un nombre aléatoire entre 0 et 1
@@ -600,163 +651,49 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
                 }
             }
 
-            // 2. Crossover Strategy
-            // if(crossover_mode == 0){
-            //     if (dist_prob(gen) < 0.6) {
-            //         for(int k=0; k<r; ++k) {
-            //             if(dist_prob(gen) < 0.5) {
-            //                 Child_W.col(k) = W1.col(k);
-            //                 Child_H.row(k) = H1.row(k);
-            //             } else {
-            //                 Child_W.col(k) = W2.col(k);
-            //                 Child_H.row(k) = H2.row(k);
-            //             }
-            //         }
-            //     } else {
-            //         // MEAN CROSSOVER (Good for local refinement)
-            //         // Pour Child_W
-            //         Child_W = ((W1.cast<double>() + W2.cast<double>()) * 0.5).array().round().matrix().cast<int>();
-            //         // Pour Child_H
-            //         Child_H = ((H1.cast<double>() + H2.cast<double>()) * 0.5).array().round().matrix().cast<int>();
-            //     }
-            // }else if(crossover_mode == 1){
-            //     for(int k=0; k<r; ++k) {
-            //         if(dist_prob(gen) < 0.5) {
-            //             Child_W.col(k) = W1.col(k);
-            //             Child_H.row(k) = H1.row(k);
-            //         } else {
-            //             Child_W.col(k) = W2.col(k);
-            //             Child_H.row(k) = H2.row(k);
-            //         }
-            //     }
-            // }else if(crossover_mode == 2){
-            //     // MEAN CROSSOVER (Good for local refinement)
-            //     // Pour Child_W
-            //     Child_W = ((W1.cast<double>() + W2.cast<double>()) * 0.5).array().round().matrix().cast<int>();
-            //     // Pour Child_H
-            //     Child_H = ((H1.cast<double>() + H2.cast<double>()) * 0.5).array().round().matrix().cast<int>();
-            // }
-            
-            // Child_W = Child_W.cwiseMax(LW).cwiseMin(UW);
-            // Child_H = Child_H.cwiseMax(LH).cwiseMin(UH);
-
-            // // 3. Mutation
-            // if(mutation_mode == 0){
-            //     if (dist_prob(gen) < 0.20) { 
-            //         int c1 = dist_col(gen);
-            //         int c2 = dist_col(gen);
-            //         Child_W.col(c1).swap(Child_W.col(c2));
-            //         Child_H.row(c1).swap(Child_H.row(c2));
-            //     }
-            //     if (dist_prob(gen) < 0.30) { 
-            //         int col = dist_col(gen);
-            //         double type = dist_prob(gen);
-                    
-            //         if (type < 0.3) {
-            //             for(int row=0; row<m; ++row) Child_W(row, col) = LW; 
-            //         } else if (type < 0.6) {
-            //             for(int row=0; row<m; ++row) Child_W(row, col) = dist_val_W(gen);
-            //         } else {
-            //             double alpha = (dist_prob(gen) < 0.5) ? 0.5 : 2.0;
-            //             for(int row=0; row<m; ++row) {
-            //                 int val = (int)round(Child_W(row, col) * alpha); 
-            //                 Child_W(row, col) = max(LW, min(UW, val));
-            //             }
-            //         }
-            //     }
-            //     if (dist_prob(gen) < 0.7) { 
-            //         for(int row=0; row<m; ++row) {
-            //             for(int col=0; col<r; ++col) {
-            //                 if (dist_prob(gen) < mutation_rate) {
-            //                     int shift = (dist_prob(gen) < 0.5) ? -1 : 1;
-            //                     if (dist_prob(gen) < 0.1) shift *= 2;
-            //                     int val = Child_W(row, col) + shift;
-            //                     Child_W(row, col) = max(LW, min(UW, val));
-            //                 }
-            //             }
-            //         }
-            //     }
-            // }else if(mutation_mode == 1){
-            //     if (dist_prob(gen) < 0.20) { 
-            //         int c1 = dist_col(gen);
-            //         int c2 = dist_col(gen);
-            //         Child_W.col(c1).swap(Child_W.col(c2));
-            //         Child_H.row(c1).swap(Child_H.row(c2));
-            //     }
-            // }else if(mutation_mode == 2){
-            //     if (dist_prob(gen) < 0.30) { 
-            //         int col = dist_col(gen);
-            //         double type = dist_prob(gen);
-                    
-            //         if (type < 0.3) {
-            //             for(int row=0; row<m; ++row) Child_W(row, col) = LW; 
-            //         } else if (type < 0.6) {
-            //             for(int row=0; row<m; ++row) Child_W(row, col) = dist_val_W(gen);
-            //         } else {
-            //             double alpha = (dist_prob(gen) < 0.5) ? 0.5 : 2.0;
-            //             for(int row=0; row<m; ++row) {
-            //                 int val = (int)round(Child_W(row, col) * alpha); 
-            //                 Child_W(row, col) = max(LW, min(UW, val));
-            //             }
-            //         }
-            //     }
-            // }else if(mutation_mode == 3){
-            //     if (dist_prob(gen) < 0.7) { 
-            //         for(int row=0; row<m; ++row) {
-            //             for(int col=0; col<r; ++col) {
-            //                 if (dist_prob(gen) < mutation_rate) {
-            //                     int shift = (dist_prob(gen) < 0.5) ? -1 : 1;
-            //                     if (dist_prob(gen) < 0.1) shift *= 2;
-            //                     int val = Child_W(row, col) + shift;
-            //                     Child_W(row, col) = max(LW, min(UW, val));
-            //                 }
-            //             }
-            //         }
-            //     }
-            // }
-
             // 4. Optimisation Rapide 
             double f_obj = 0.0;
 
-            // MatrixXi W = Child_W.cast<int>();
-            // if(mode_opti == "IMF") {
-            //     f_obj = solve_matrix_imf(X, W, Child_H, LH, UH);
-            // } else if(mode_opti == "BMF") {
-            //     f_obj = solve_matrix_bmf(X, W, Child_H, LH, UH);
-            // } else if(mode_opti == "RELU") {
-            //     f_obj = solve_matrix_relu(X, W, Child_H, LH, UH);
-            // }
+            tuple<MatrixXi, MatrixXi, double> opt_result;
 
-            int max_iters_child = 2; 
-            for(int iter=0; iter<max_iters_child; ++iter) {
-                // EXPLICIT CASTING 
-                MatrixXi W = Child_W.cast<int>(); 
+            opt_result= optimize_alternating_cpp(
+                X, Child_W, Child_H, 
+                LW, UW, LH, UH, 
+                10, 3600.0, mode_opti
+            );
+
+            tie(Child_W, Child_H, f_obj) = opt_result;
+
+            // int max_iters_child = 5; 
+            // for(int iter=0; iter<max_iters_child; ++iter) {
+            //     // EXPLICIT CASTING 
+            //     MatrixXi W = Child_W.cast<int>(); 
                 
-                if(mode_opti == "IMF") {
-                    f_obj = solve_matrix_imf(X, W, Child_H, LH, UH);
-                } else if(mode_opti == "BMF") {
-                    f_obj = solve_matrix_bmf(X, W, Child_H, LH, UH);
-                } else if(mode_opti == "RELU") {
-                    f_obj = solve_matrix_relu(X, W, Child_H, LH, UH);
-                }
+            //     if(mode_opti == "IMF") {
+            //         f_obj = solve_matrix_imf(X, W, Child_H, LH, UH);
+            //     } else if(mode_opti == "BMF") {
+            //         f_obj = solve_matrix_bmf(X, W, Child_H, LH, UH);
+            //     } else if(mode_opti == "RELU") {
+            //         f_obj = solve_matrix_relu(X, W, Child_H, LH, UH);
+            //     }
                 
-                MatrixXd XT = X.transpose();
-                MatrixXi H = Child_H.cast<int>();
-                MatrixXi HT = H.transpose();
+            //     MatrixXd XT = X.transpose();
+            //     MatrixXi H = Child_H.cast<int>();
+            //     MatrixXi HT = H.transpose();
                 
-                MatrixXi WT = Child_W.transpose();
-                double f_w = f_obj;
+            //     MatrixXi WT = Child_W.transpose();
+            //     double f_w = f_obj;
                 
-                if(mode_opti == "IMF") {
-                    f_w = solve_matrix_imf(XT, HT, WT, LW, UW);
-                } else if(mode_opti == "BMF") {
-                    f_w = solve_matrix_bmf(XT, HT, WT, LW, UW);
-                } else if(mode_opti == "RELU") {
-                    f_w = solve_matrix_relu(XT, HT, WT, LW, UW);
-                }
+            //     if(mode_opti == "IMF") {
+            //         f_w = solve_matrix_imf(XT, HT, WT, LW, UW);
+            //     } else if(mode_opti == "BMF") {
+            //         f_w = solve_matrix_bmf(XT, HT, WT, LW, UW);
+            //     } else if(mode_opti == "RELU") {
+            //         f_w = solve_matrix_relu(XT, HT, WT, LW, UW);
+            //     }
                 
-                Child_W = WT.transpose();
-            }
+            //     Child_W = WT.transpose();
+            // }
 
             int dist_p1 = count_diff(Child_W, W1);
             int dist_p2 = count_diff(Child_W, W2);

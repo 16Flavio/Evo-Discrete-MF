@@ -104,19 +104,29 @@ def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=
     # On génère de nouveaux individus en perturbant les meilleurs survivants trouvés.
     
     if len(survivors) < N:
+            
+        for candidate in survivors:
+            W_new = generate_antithetic_W(candidate[1][0], LW, UW)
 
-        W_pop = generate_population_W(X, r, N - len(survivors), LW, UW, LH, UH, config=config, verbose=False)
+            H_new = np.random.randint(LH, UH + 1, size=(r, n))
+            H_new, f_new = optimizeHforW(X, W_new, H_new, LW, UW, LH, UH, config=config)
 
-        for W_new in W_pop:
+            survivors.append([f_new, (W_new, H_new)])
+
+            if len(survivors) >= N:
+                break
+        
+        while len(survivors) < N:
+            W_new = np.random.randint(LW, UW + 1, size=(m, r))
             
-            parent_W, parent_H = survivors[np.random.randint(0, num_natural_survivors)][1]
-            
-            # Optimisation rapide avec le nouveau W
-            W_opt, H_opt, f_new = optimize_alternating_wrapper(
-                X, W_new, parent_H.copy(), LW, UW, LH, UH, config=config, max_iters=2
-            )
-            
-            survivors.append([f_new, (W_opt, H_opt)])
+            H_new = np.random.randint(LH, UH + 1, size=(r, n))
+            H_new, f_new = optimizeHforW(X, W_new, H_new, LW, UW, LH, UH, config=config)
+
+            # W_new, H_new, f_new = optimize_alternating_wrapper(X, W_new, 
+            #                                                   np.random.randint(LH, UH + 1, size=(r, n)), 
+            #                                                   LW, UW, LH, UH, 
+            #                                                   config=config, max_iters=5)
+            survivors.append([f_new, (W_new, H_new)])
 
     # if len(survivors) < N:
     #     # On cycle sur les meilleurs survivants pour générer des mutants
@@ -423,7 +433,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 population = transpose_population(population)
             iters_in_phase = 0
             stagnation_counter = max(0, stagnation_counter - 5)
-            min_diff_percent = min(0.01, min_diff_percent * 1.5)
+            min_diff_percent = min(0.05, min_diff_percent * 1.5)
         elif switch_triggered and not config.allow_transpose:
             stagnation_counter = 0
             iters_in_phase = 0
@@ -454,9 +464,10 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 population.append([f_child, (W_child, H_child)])
             
             # Dynamic Diversity Selection
+            
             population, _ = select_diverse_survivors(active_X, population, N, min_diff_percent, G_L, G_U, P_L, P_U, config)
 
-            # population.sort(key=lambda x: x[0])
+            population.sort(key=lambda x: x[0])
             # population = population[:N]
 
             current_best = population[0]
@@ -486,7 +497,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 # Intensification
                 # W_c, H_c = current_best[1]
                 # W_boost, H_boost, f_boost = optimize_alternating_wrapper(
-                #     active_X.astype(float), W_c, H_c, G_L, G_U, P_L, P_U, config=config, max_iters=100, effort=3
+                #     active_X.astype(float), W_c, H_c, G_L, G_U, P_L, P_U, config=config, max_iters=100
                 # )
                 # if f_boost < best_f:
                 #      best_f = f_boost
