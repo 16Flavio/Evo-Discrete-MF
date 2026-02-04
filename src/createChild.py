@@ -6,7 +6,7 @@ try:
     from .fast_solver import align_parents_cpp, generate_children_batch
     USE_CPP_BATCH = True
 except ImportError:
-    print("Warning: Module C++ non trouvé. Veuillez compiler avec setup.py.")
+    print("Warning: Module C++ non trouvé. Veuillez compiler avec setup.py. (align_parents_cpp, generate_children_batch)")
     USE_CPP_BATCH = False
 
 def align_parents(W1, W2):
@@ -19,7 +19,7 @@ def align_parents(W1, W2):
     else:
         return W2
 
-def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH, start, TIME_LIMIT, tournament_size, mutation_rate):
+def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH, mode_opti, start, TIME_LIMIT, tournament_size):
     """
     Generates a new generation of children using C++ batch processing.
     It performs selection, crossover, and mutation in parallel.
@@ -29,14 +29,17 @@ def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH,
         Pop_H = [p[1][1].astype(np.int32) for p in population]
         Pop_Fitness = [float(p[0]) for p in population]
         
+        current_cpp_seed = np.random.randint(0, 2**31-1)
+
         # Appel optimisé au C++
         raw_results = generate_children_batch(
             X.astype(float),
             Pop_W, Pop_H, Pop_Fitness,
             int(num_child),
             int(tournament_size),
-            float(mutation_rate),
-            int(LW), int(UW), int(LH), int(UH)
+            int(LW), int(UW), int(LH), int(UH),
+            str(mode_opti),
+            int(current_cpp_seed)
         )
         
         children = []
@@ -45,23 +48,7 @@ def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH,
             if child_hash not in seen_hashes:
                 seen_hashes.add(child_hash)
                 children.append([f_res, (W_res, H_res), p1_idx, p2_idx, d1, d2])
-        children.sort(key=lambda x: x[0]) 
-    
-        if children:
-            best_childs = children[:3]
-            for i, best_child in enumerate(best_childs):
-                fitness, (W, H), p1, p2, d1, d2 = best_child
-                
-                W_opt, H_opt, f_opt = optimize_alternating_wrapper(
-                    X, 
-                    W, H, 
-                    LW, UW, LH, UH,
-                    max_iters=100,
-                    effort=3
-                )
-                
-                if f_opt < fitness:
-                    children[i] = [f_opt, (W_opt, H_opt), p1, p2, d1, d2]
+
         return children
 
     return []

@@ -8,10 +8,8 @@ Setup script for building the C++ extension module 'fast_solver'.
 Uses pybind11 for Python bindings and OpenMP for parallelization.
 """
 
-# Determine the include directory for pybind11
 pybind11_include = pybind11.get_include()
 
-# Define the extension module
 ext_modules = [
     Extension(
         "fast_solver",
@@ -30,8 +28,8 @@ ext_modules = [
 
 setup(
     name="fast_solver",
-    version="2.0",
-    author="Antigravity",
+    version="1.0",
+    author="Flavio Drogo",
     description="Optimized C++ Solver for Matrix Factorization",
     ext_modules=ext_modules,
 )
