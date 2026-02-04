@@ -4,7 +4,6 @@ import numpy as np
 import random
 import time
 
-# Ajout du chemin src au path pour les imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.join(current_dir, 'src')
 sys.path.append(src_dir)
@@ -12,50 +11,36 @@ sys.path.append(src_dir)
 from utils.verification import fobj, fobj_bmf, fobj_relu, solutionIsFeasible
 from utils.file_utils import read_txt_file, write_txt_file, read_txt_file_bmf
 from src.solver import metaheuristic
-from src.config import ConfigAblation
 
 def main():
+    """
+    Main entry point for the Evo-Discrete-MF matrix optimization script.
+    
+    Parses command-line arguments to configure the matrix factorization process,
+    including input/output paths, rank, time limits, population settings, and
+    factorization mode (IMF, BMF, or RELU). Initializes the random seed if provided,
+    loads the input matrix, executes the metaheuristic solver, and verifies the
+    resulting solution before saving it to the output file.
+    """
     parser = argparse.ArgumentParser(
-        description="Script principal pour l'optimisation de matrices (Evo Discrete MF)."
+        description="Main script for matrix optimization (Evo Discrete MF)."
     )
-    # Arguments obligatoires
-    parser.add_argument("-i", "--input", help="Chemin vers le fichier matrice en entrée.", required=True)
-    parser.add_argument("-o", "--output", help="Chemin vers le fichier de sortie.", required=True)
+    parser.add_argument("-i", "--input", help="Path to input matrix file.", required=True)
+    parser.add_argument("-o", "--output", help="Path to output file.", required=True)
     
-    # Paramètres Algo
-    parser.add_argument("-r", "--rank", help="Rang de la factorisation.", type=int, default=10)
-    parser.add_argument("-t", "--time_limit", help="Temps limite (s). Défaut: 300.0", type=float, default=300.0)
-    parser.add_argument("-n", "--nombre_population", help="Taille population. Défaut: 50", type=int, default=50)
-    parser.add_argument("-s", "--tournament_size", help="Taille tournoi. Défaut: 3", type=int, default=3)
-    parser.add_argument("-m", "--mutation_rate", help="Taux mutation. Défaut: 0.1", type=float, default=0.1)
+    parser.add_argument("-r", "--rank", help="Factorization rank.", type=int, default=10)
+    parser.add_argument("-t", "--time_limit", help="Time limit (s). Default: 300.0", type=float, default=300.0)
+    parser.add_argument("-n", "--population_size", help="Population size. Default: 50", type=int, default=50)
+    parser.add_argument("-s", "--tournament_size", help="Tournament size. Default: 3", type=int, default=3)
 
-    # --- Seed ---
-    parser.add_argument("--seed", help="Graine aléatoire (Seed) pour la reproductibilité. Défaut: None (Aléatoire)", type=int, default=None)
-
-    # --- ARGUMENTS ABLATION STUDY ---
-    parser.add_argument("--no-svd", action="store_true", help="Désactiver SVD Init")
-    parser.add_argument("--no-kmeans", action="store_true", help="Désactiver KMeans Init")
-    parser.add_argument("--no-nmf", action="store_true", help="Désactiver NMF Init")
-    parser.add_argument("--no-greedy", action="store_true", help="Désactiver Greedy Init")
+    parser.add_argument("--seed", help="Random seed for reproducibility. Default: None (Random)", type=int, default=None)
     
-    parser.add_argument("--crossover", type=str, choices=['UNIFORM', 'MEAN', 'BOTH'], default='BOTH',
-                        help="Type de Crossover : UNIFORM (mélange) ou MEAN (moyenne)")
-    
-    parser.add_argument("--restart-mode", type=str, choices=['FULL', 'SIMPLE', 'NONE'], default='FULL', 
-                        help="Stratégie de restart : FULL (Smart) ou SIMPLE (Random)")
-    
-    parser.add_argument("--no-transpose", action="store_true", help="Désactiver le changement de phase (Transpose)")
-    
-    parser.add_argument("--debug-mode", action="store_true", help="Activer le mode debug pour plus d'infos")
-    parser.add_argument("--mutation-type", type=str, choices=['SWAP', 'GREEDY', 'NOISE', 'ALL', 'NONE'], default='ALL',
-                        help="Type de mutation à utiliser")
-    parser.add_argument("--factorization-mode", type=str, choices=['IMF', 'BMF', 'RELU'], default='IMF',    
-                        help="Mode de factorisation : IMF (entière), BMF (binaire), RELU (avec ReLU)")
-    # -------------------------------
+    parser.add_argument("--debug-mode", action="store_true", help="Enable debug mode for more info")
+    parser.add_argument("--factorization-mode", type=str, choices=['IMF', 'BMF', 'RELU'], default='IMF',
+                        help="Factorization mode: IMF (integer), BMF (binary), RELU (with ReLU)")
 
     args = parser.parse_args()
 
-    # 1. Configuration de la seed
     if args.seed is not None:
         print("Fixing random seed to:", args.seed)
         np.random.seed(args.seed)
@@ -63,31 +48,9 @@ def main():
     else:
         print("No seed provided, using random seed.")
 
-    # 2. Configuration
-    config = ConfigAblation()
-    config.factorization_mode = args.factorization_mode
-
-    if args.no_svd: config.use_svd = False
-    if args.no_kmeans: config.use_kmeans = False
-    if args.no_nmf: config.use_nmf = False
-    if args.no_greedy: config.use_greedy = False
-    
-    config.crossover_type = args.crossover
-    config.restart_mode = args.restart_mode
-    if args.no_transpose: config.allow_transpose = False
-    if args.debug_mode: config.debug_mode = True
-    config.mutation_type = args.mutation_type
-    
-    if args.factorization_mode == "BMF":
-        config = ConfigAblation.get_BMF_optimal()
-    elif args.factorization_mode == "IMF":
-        config = ConfigAblation.get_IMF_optimal()
-
-    print(f"\n=== Lancement Evo-Discrete-MF ===")
+    print(f"\n=== Launching Evo-Discrete-MF ===")
     print(f"Input: {args.input}")
-    print(f"Config Active: {config}\n")
 
-    # 3. Lecture
     try:
         if args.factorization_mode == "BMF":
             LW = 0
@@ -98,21 +61,22 @@ def main():
         else:
             X, LW, UW, LH, UH = read_txt_file(args.input)
     except FileNotFoundError:
-        print(f"Erreur: Fichier {args.input} introuvable.")
+        print(f"Error: File {args.input} not found.")
         return
 
-    # 4. Lancement Metaheuristique
+    debug = False
+    if args.debug_mode:
+        debug = True
+
     W, H, f_val = metaheuristic(
-        X, args.rank, LW, UW, LH, UH, 
+        X, args.rank, LW, UW, LH, UH, args.factorization_mode,
         TIME_LIMIT=args.time_limit, 
-        N=args.nombre_population, 
-        tournament_size=args.tournament_size, 
-        mutation_rate=args.mutation_rate,
-        config=config # On passe la config !
+        N=args.population_size, 
+        tournament_size=args.tournament_size,
+        debug_mode=debug
     )
 
-    # 5. Vérification & Sauvegarde
-    print("\n=== Vérification Finale ===")
+    print("\n=== Final Verification ===")
     if args.factorization_mode == "BMF":
         f_check = fobj_bmf(X, W, H)
     elif args.factorization_mode == "RELU":
@@ -122,19 +86,16 @@ def main():
     print(f"Fitness Solver: {f_val}")
     print(f"Fitness Check : {f_check}")
 
-    print(f"W = {W}")
-    print(f"H = {H}")
-
     if f_val != f_check:
-        print("/!\\ ATTENTION: Divergence entre solver et vérification /!\\")
+        print("/!\\ WARNING: Divergence between solver and verification /!\\")
 
     if not solutionIsFeasible(W, H, args.rank, LW, UW, LH, UH):
-        print("/!\\ ATTENTION: Solution invalide (hors bornes) /!\\")
+        print("/!\\ WARNING: Invalid solution (out of bounds) /!\\")
     else:
-        print("Solution valide (contraintes respectées).")
+        print("Valid solution (constraints respected).")
 
     write_txt_file(args.output, f_val, W, H)
-    print(f"Solution écrite dans : {args.output}")
+    print(f"Solution written to: {args.output}")
 
 if __name__ == "__main__":
     main()

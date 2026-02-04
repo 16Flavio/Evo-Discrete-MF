@@ -4,16 +4,14 @@ import copy
 
 from .local_search import optimize_alternating_wrapper, optimizeHforW
 from .createChild import generateNewGeneration, align_parents
-from .init_pop import generate_population_W, perturb_W, generate_antithetic_W, perturb_W_destructive, initialize_column_sampling
+from .init_pop import generate_population_W
 
 try:
     from .fast_solver import get_aligned_distance
     USE_CPP_DIST = True
 except ImportError:
-    print("Warning: Module C++ non trouvé. Veuillez compiler avec setup.py. (get_aligned_distance)")
+    print("Warning: C++ module not found. Please compile with setup.py. (get_aligned_distance)")
     USE_CPP_DIST = False
-
-# --- UTILS ---
 
 def get_distance_py(W1, W2):
     """
@@ -37,16 +35,15 @@ def transpose_population(pop):
     """
     return [transpose_individual(p) for p in pop]
 
-def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=1, LH=0, UH=1, config=None):
+def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=1, LH=0, UH=1, mode_opti=None):
     """
-    AMÉLIORÉ : Sélectionne les N meilleurs survivants diversifiés.
-    Si la diversité est insuffisante, remplit le reste avec des mutations (Immigration)
-    plutôt que de remettre les doublons.
+    Selects the N best diverse survivors.
+    If diversity is insufficient, fills the rest with mutations
+    rather than keeping duplicates.
     """
 
     m, n = X.shape
 
-    # 1. Tri par fitness (du meilleur au pire)
     population.sort(key=lambda x: x[0])
     
     if not population:
@@ -55,18 +52,12 @@ def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=
     survivors = []
     survivors.append(population[0]) 
     
-    # Récupération des dimensions pour le calcul de distance
     m, r = population[0][1][0].shape
     min_pixels = int(m * r * min_diff_percent)
     if min_pixels < 1: min_pixels = 1
     
-    # --- AMÉLIORATION 1 : Lookback Dynamique ---
-    # Au lieu de 20 fixe, on regarde 20% des survivants actuels (borné entre 5 et 50)
-    # Cela permet de scaler si N devient très grand.
-    
     processed_count = 0
     
-    # 2. Filtrage Glouton (Clearing)
     for i in range(1, len(population)):
         if len(survivors) >= N: break
         
@@ -75,7 +66,6 @@ def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=
         
         is_distinct = True
         
-        # Fenêtre de vérification dynamique
         check_window = max(20, int(len(survivors) * 0.5))
         
         start_check = max(0, len(survivors) - check_window)
@@ -83,7 +73,6 @@ def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=
         for k in range(start_check, len(survivors)):
             survivor = survivors[k]
             
-            # Utilisation de la distance alignée (C++ ou Python)
             if USE_CPP_DIST:
                 dist = get_aligned_distance(survivor[1][0].astype(np.int32), W_cand.astype(np.int32))
             else:
@@ -98,29 +87,19 @@ def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=
             
     num_natural_survivors = len(survivors)
 
-    # --- AMÉLIORATION 2 : Remplissage par Immigration (et non par clones) ---
-    # Si on n'a pas atteint N, c'est que la population stagne.
-    # On génère de nouveaux individus en perturbant les meilleurs survivants trouvés.
-
     while len(survivors) < N:
-        # 1. Génération d'un pool de candidats (ex: 10 candidats par place libre)
         num_candidates = 10
         candidates = []
         for _ in range(num_candidates):
-            # Génération purement aléatoire
             W_cand = np.random.randint(LW, UW + 1, size=(m, r))
             candidates.append(W_cand)
         
-        # 2. Sélection du candidat le plus "isolé" (Loin des top élites)
-        # On compare seulement aux 5-10 meilleurs pour la rapidité
         reference_population = [s[1][0] for s in survivors[:min(len(survivors), 10)]]
         
         best_W_far = candidates[0]
         max_min_distance = -1
         
         for W_c in candidates:
-            # Calcul de la distance minimale par rapport au groupe de référence
-            # On cherche le point qui maximise cette distance minimale (Maximin)
             min_dist_to_group = float('inf')
             
             for W_ref in reference_population:
@@ -136,174 +115,18 @@ def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=
                 max_min_distance = min_dist_to_group
                 best_W_far = W_c
         
-        # 3. Intégration avec Optimisation "Légère"
-        # CRUCIAL : On optimise H pour que l'individu ait une fitness décente,
-        # MAIS on n'optimise PAS W (ou très peu) pour ne pas détruire sa diversité structurelle.
-        
         H_new = np.random.randint(LH, UH + 1, size=(r, n))
         
-        # On utilise optimizeHforW qui ne touche pas à W
-        H_final, f_final = optimizeHforW(X, best_W_far, H_new, LW, UW, LH, UH, config=config)
+        H_final, f_final = optimizeHforW(X, best_W_far, H_new, LW, UW, LH, UH, mode_opti)
         
         survivors.append([f_final, (best_W_far, H_final)])
 
     return survivors, num_natural_survivors
 
-def ruin_and_recreate(W, G_L, G_U, ruin_percent=0.2):
-    """
-    Large Neighborhood Search (LNS) operator.
-    Destroys 'ruin_percent' of the columns of W and resets them to random values.
-    """
-    m, r = W.shape
-    W_new = W.copy()
-    n_ruin = int(r * ruin_percent)
-    if n_ruin < 1: n_ruin = 1
-    
-    # Randomly select columns to ruin
-    cols_to_ruin = np.random.choice(r, n_ruin, replace=False)
-    
-    for col in cols_to_ruin:
-        # Reset to random values within bounds
-        W_new[:, col] = np.random.randint(G_L, G_U + 1, size=m)
-        
-    return W_new
-
-def apply_smart_restart(best_W, best_H, best_f, N, X, LW, UW, LH, UH, seen_hashes, current_phase, restart_count, population, config=None):
-    """
-    ENHANCED RESTART STRATEGY V2
-    - Level 1 (Count 1): Soft Restart (Keep Best + Diverse)
-    - Level 2 (Count 2): Ruins & Recreate (LNS) on Best
-    - Level 3+ (Count > 2): Alien Restart (Antithetic)
-    """
-    actual_restart_count = restart_count
-    if config and config.restart_mode == "SIMPLE":
-        actual_restart_count = 1
-
-    # Config Phase
-    if current_phase == 'DIRECT':
-        X_gen = X
-        G_L, G_U = LW, UW; P_L, P_U = LH, UH
-        ref_W, ref_H = best_W, best_H
-        m, r = best_W.shape; n = best_H.shape[1]
-    else:
-        X_gen = X.T
-        G_L, G_U = LH, UH; P_L, P_U = LW, UW
-        ref_W, ref_H = best_H.T, best_W.T
-        m, r = best_H.shape[1], best_H.shape[0]; n = best_W.shape[0]
-
-    X_f_gen = X_gen.astype(float)
-
-    range_val = float(G_U - G_L)
-    if range_val < 1.0: range_val = 1.0
-    
-    sigma = float(restart_count) * (range_val * 0.05)
-    new_population = []
-
-    # --- STRATÉGIE DE RESTART ---
-    
-    if actual_restart_count == 1:
-        new_population.append([best_f, (ref_W.copy(), ref_H.copy())])
-        
-        # Keep 3 diverse high-quality individuals
-        if len(population) > 5:
-            diverse_count = 0
-            for i in range(1, len(population)):
-                cand = population[i]
-                if USE_CPP_DIST:
-                    dist = get_aligned_distance(ref_W.astype(np.int32), cand[1][0].astype(np.int32))
-                else:
-                    dist = get_distance_py(ref_W, cand[1][0])
-                
-                if dist > (m * r * 0.05): 
-                    new_population.append(cand)
-                    diverse_count += 1
-                if diverse_count >= 3: break
-        sigma = range_val * 0.15
-
-    elif actual_restart_count == 2:
-        
-        # 1. Keep the Best (Elitism) - CRITICAL FIX
-        new_population.append([best_f, (ref_W.copy(), ref_H.copy())])
-        
-        # 2. Add Ruined version
-        W_ruined = ruin_and_recreate(ref_W, G_L, G_U, ruin_percent=0.15)
-        H_rand = np.random.randint(P_L, P_U + 1, size=(r, n))
-        W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f_gen, W_ruined, H_rand, G_L, G_U, P_L, P_U, max_iters=40
-        )
-        new_population.append([f, (W_opt, H_opt)])
-        sigma = range_val * 0.30
-
-    else:
-        # Generate Antithetic from the SECOND best to avoid cycling
-        target_W = ref_W
-        if len(population) > 1: target_W = population[1][1][0]
-
-        W_anti = generate_antithetic_W(target_W, G_L, G_U)
-        H_rand = np.random.randint(P_L, P_U + 1, size=(r, n))
-        W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f_gen, W_anti, H_rand, G_L, G_U, P_L, P_U, max_iters=20
-        )
-        new_population.append([f, (W_opt, H_opt)])
-        sigma = range_val * 0.80 
-
-    # 1. Nouvelles Graines "Hallucinées" (Noisy Init)
-    fresh_W_list = generate_population_W(
-        X_gen, r, int(N), G_L, G_U, P_L, P_U, config=config,
-        verbose=False, perturbation_sigma=sigma
-    )
-    
-    for W_cand in fresh_W_list:
-        if len(new_population) >= N: break
-        H_rand = np.random.randint(P_L, P_U + 1, size=(r, n))
-        W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f_gen, W_cand, H_rand, G_L, G_U, P_L, P_U, config=config, max_iters=15
-        )
-        child_hash = (W_opt.tobytes(), H_opt.tobytes())
-        if child_hash not in seen_hashes:
-            seen_hashes.add(child_hash)
-            new_population.append([f, (W_opt, H_opt)])
-            
-    # 2. Remplissage Mutants & Destructeurs
-    seed_base = ref_W
-    while len(new_population) < N:
-        mutation_type = np.random.rand()
-        
-        if mutation_type < 0.3:
-            # Mutation classique
-            W_mut = perturb_W(seed_base, np.random.uniform(0.1, 0.5), G_L, G_U)
-        elif mutation_type < 0.6:
-            # Mutation DESTRUCTIVE
-            W_mut = perturb_W_destructive(seed_base, G_L, G_U)
-        elif mutation_type < 0.8:
-            # RUINS Mutation (New)
-            W_mut = ruin_and_recreate(seed_base, G_L, G_U, ruin_percent=0.2)
-        else:
-            # Pure Random
-            W_mut = np.random.randint(G_L, G_U + 1, size=(m, r))
-
-        H_rand = np.random.randint(P_L, P_U + 1, size=(r, n))
-        W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f_gen, W_mut, H_rand, G_L, G_U, P_L, P_U, config=config, max_iters=10
-        )
-        child_hash = (W_opt.tobytes(), H_opt.tobytes())
-        if child_hash not in seen_hashes:
-            seen_hashes.add(child_hash)
-            new_population.append([f, (W_opt, H_opt)])
-
-    new_population.sort(key=lambda x: x[0])
-    return new_population
-
-# --- METAHEURISTIC MAIN ---
-
-def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size=4, mutation_rate=0.1, config=None):
+def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tournament_size=4, debug_mode = False):
     """
     Main metaheuristic function for solving the matrix factorization problem.
     """
-
-    if config is None:
-        from src.config import ConfigAblation
-        config = ConfigAblation()
 
     start_time = time.time()
     m, n = X.shape
@@ -312,34 +135,29 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     population = []
     seen_hashes = set()
     
-    # Data recording for plotting
     trace_iter = []
     trace_best = []
     trace_avg = []
     
-    # Global Best Memory
     global_best_W = None
     global_best_H = None
     global_best_f = float('inf')
 
-    if config.debug_mode:
+    if debug_mode:
         print("Debug Mode Activated: Detailed logs will be shown.")
         print("Initial Population Generation...")
 
-    # --- 1. INITIALISATION ---
-    pop_W_list = generate_population_W(X, r, N, LW, UW, LH, UH, config=config, verbose=False)
+    pop_W_list = generate_population_W(X, r, N, LW, UW, LH, UH)
     
-    if config.debug_mode:
+    if debug_mode:
         print(f"Generated {len(pop_W_list)} initial W matrices.")
 
     for i, W_opt in enumerate(pop_W_list):
         if time.time() - start_time > TIME_LIMIT - 5: break
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
-        
-        # H_opt, f = optimizeHforW(X_f, W_opt, H_rand, LW, UW, LH, UH, config=config)
 
         W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f, W_opt, H_rand, LW, UW, LH, UH, config=config, max_iters=10
+            X_f, W_opt, H_rand, LW, UW, LH, UH, mode_opti, max_iters=10
         )
 
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
@@ -350,67 +168,40 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
     population.sort(key=lambda x: x[0])
     if not population: return np.zeros((m,r)), np.zeros((r,n)), float('inf')
 
-    if config.debug_mode:
+    if debug_mode:
         print(f"Initial Population of size {len(population)} generated.")
         print(f"Best initial fitness: {population[0][0]:.6f}")
         print("Starting Main Evolutionary Loop...")
 
-    # Init Global Best
     best_f = population[0][0]
     best_W, best_H = population[0][1]
     global_best_f = best_f
     global_best_W, global_best_H = best_W.copy(), best_H.copy()
     
-    # --- RECORD & PLOT INITIAL STATE ---
     trace_iter.append(0)
     trace_best.append(best_f)
     trace_avg.append(np.mean([p[0] for p in population]))
     
-    # if DEBUG:
-    #     plot_debug_snapshot(trace_iter, trace_best, trace_avg, population, "Après Initialisation")
-
     iteration = 0
-    stagnation_counter = 0
-    last_improvement_time = time.time()
-    restart_count = 0 
     
-    if not config.allow_transpose:
-        if m*r < n*r:
-            current_phase = 'DIRECT'
-        else:
-            current_phase = 'TRANSPOSE'
-            population = transpose_population(population)
-    else:
-        current_phase = 'DIRECT'
+    current_phase = 'DIRECT'
 
     iters_in_phase = 0
     
-    curr_mut = mutation_rate
-    curr_tourn = tournament_size
-    
-    # Dynamic Diversity Parameter
     min_diff_percent = 0.001
     
-    # ADAPTIVE RESTART THRESHOLD
-    base_restart_threshold = max(10.0, min(60.0, TIME_LIMIT * 0.15))
-    restart_threshold = base_restart_threshold
-    
-    if config.debug_mode:
+    if debug_mode:
         print(f"[DEBUG] Starting Metaheuristic with Phase: {current_phase}, Initial Best Fitness: {best_f:.6f}")
 
-    # --- 2. BOUCLE PRINCIPALE ---
     while time.time() - start_time < TIME_LIMIT - 5:
-        current_time = time.time()
 
-        if config.debug_mode and iteration % 50 == 0:
+        if debug_mode and iteration % 50 == 0:
             print(f"[DEBUG] Iteration {iteration}, Best Fitness: {best_f:.6f}, Population Size: {len(population)}, Phase: {current_phase}")
         
-        # A. Changement de Phase
         switch_triggered = False
-        #if stagnation_counter > 10: switch_triggered = True
         if iters_in_phase > 30: switch_triggered = True
             
-        if switch_triggered and config.allow_transpose:
+        if switch_triggered:
             if current_phase == 'DIRECT':
                 current_phase = 'TRANSPOSE'
                 population = transpose_population(population)
@@ -418,13 +209,8 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 current_phase = 'DIRECT'
                 population = transpose_population(population)
             iters_in_phase = 0
-            stagnation_counter = max(0, stagnation_counter - 5)
-            min_diff_percent = min(0.05, min_diff_percent * 1.5)
-        elif switch_triggered and not config.allow_transpose:
-            stagnation_counter = 0
-            iters_in_phase = 0
+            min_diff_percent = min(0.2, min_diff_percent * 1.5)
 
-        # B. Préparation
         if current_phase == 'DIRECT':
             active_X = X
             G_L, G_U = LW, UW; P_L, P_U = LH, UH
@@ -432,16 +218,13 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
             active_X = X.T
             G_L, G_U = LH, UH; P_L, P_U = LW, UW
 
-        # C. Evolution
         temp_hashes = set() 
         children = generateNewGeneration(
             temp_hashes, population, N//3, active_X, 
-            G_L, G_U, P_L, P_U, 
-            start_time, TIME_LIMIT, int(tournament_size), float(mutation_rate),
-            config=config
+            G_L, G_U, P_L, P_U, mode_opti,
+            start_time, TIME_LIMIT, int(tournament_size)
         )
         
-        # D. Réintégration (Global Competition)
         if children:
             for child in children:
                 if len(child) < 2: continue
@@ -449,16 +232,12 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                 W_child, H_child = child[1]
                 population.append([f_child, (W_child, H_child)])
             
-            # Dynamic Diversity Selection
-            
-            population, _ = select_diverse_survivors(active_X, population, N, min_diff_percent, G_L, G_U, P_L, P_U, config)
+            population, _ = select_diverse_survivors(active_X, population, N, min_diff_percent, G_L, G_U, P_L, P_U, mode_opti)
 
             population.sort(key=lambda x: x[0])
-            # population = population[:N]
 
             current_best = population[0]
             
-            # Mise à jour du meilleur local
             if current_best[0] < best_f - 1e-3:
                 best_f = current_best[0]
                 if current_phase == 'DIRECT':
@@ -467,40 +246,11 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
                     H_T, W_T = current_best[1]
                     best_W, best_H = W_T.T, H_T.T
                 
-                stagnation_counter = 0
-                last_improvement_time = current_time
-                restart_count = 0 
                 min_diff_percent = 0.001
                 
-                # Reset Restart Threshold on improvement
-                restart_threshold = max(10.0, base_restart_threshold * 0.75)
-                
-                # Mise à jour du GLOBAL BEST
                 if best_f < global_best_f:
                     global_best_f = best_f
                     global_best_W, global_best_H = best_W.copy(), best_H.copy()
-
-                # Intensification
-                # W_c, H_c = current_best[1]
-                # W_boost, H_boost, f_boost = optimize_alternating_wrapper(
-                #     active_X.astype(float), W_c, H_c, G_L, G_U, P_L, P_U, config=config, max_iters=100
-                # )
-                # if f_boost < best_f:
-                #      best_f = f_boost
-                #      population[0] = [best_f, (W_boost, H_boost)]
-                #      if current_phase == 'DIRECT': best_W, best_H = W_boost, H_boost
-                #      else: best_W, best_H = H_boost.T, W_boost.T
-                     
-                #      if best_f < global_best_f:
-                #         global_best_f = best_f
-                #         global_best_W, global_best_H = best_W.copy(), best_H.copy()
-                        
-                curr_mut = max(0.05, curr_mut * 0.9)
-                curr_tourn = min(8, curr_tourn + 1)
-            else:
-                stagnation_counter += 1
-                curr_mut = min(0.7, curr_mut * 1.1)
-                if stagnation_counter % 3 == 0: curr_tourn = max(2, curr_tourn - 1)
 
         iters_in_phase += 1
         iteration += 1
@@ -508,46 +258,19 @@ def metaheuristic(X, r, LW, UW, LH, UH, TIME_LIMIT=300.0, N=100, tournament_size
         if global_best_f == 0:
             break
 
-        # E. Restart Logique (ADAPTIVE)
-        time_since_last_improv = current_time - last_improvement_time
-        
-        if time_since_last_improv > restart_threshold and config.restart_mode != "NONE":
-
-            if config.debug_mode:
-                print(f"Restart Triggered at Iteration {iteration} after {time_since_last_improv:.2f}s of stagnation.")
-
-            restart_count += 1
-            restart_threshold = max(5.0, restart_threshold * 0.8)
-            
-        #     # 1. Sauvegarde de l'élite (le meilleur absolu)
-        #     elite_f = global_best_f
-        #     elite_W = global_best_W.copy()
-        #     elite_H = global_best_H.copy()
-            
-            last_improvement_time = time.time()
-            stagnation_counter = 0
-            curr_mut = mutation_rate; curr_tourn = tournament_size
-            min_diff_percent = 0.001
-
-        # --- DATA RECORDING (For Final Plot) ---
-        trace_iter.append(iteration)
-        trace_best.append(best_f)
-        trace_avg.append(np.mean([p[0] for p in population]))
-
-    # --- 3. FIN ---
     remaining = TIME_LIMIT - (time.time() - start_time)
     
     final_W, final_H, final_f = global_best_W, global_best_H, global_best_f
 
     if remaining > 1.0:
         final_W, final_H, final_f = optimize_alternating_wrapper(
-            X_f, final_W, final_H, LW, UW, LH, UH, config=config, max_iters=2000, time_limit=remaining
+            X_f, final_W, final_H, LW, UW, LH, UH, mode_opti, max_iters=2000, time_limit=remaining
         )
     
     if final_f < global_best_f:
         global_best_W, global_best_H, global_best_f = final_W, final_H, final_f
 
-    if config.debug_mode:
+    if debug_mode:
         print(f"[DEBUG] Metaheuristic completed in {time.time() - start_time:.2f}s over {iteration} iterations.")
         print(f"[DEBUG] Global Best Fitness: {global_best_f:.6f}")
 

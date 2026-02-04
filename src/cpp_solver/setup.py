@@ -8,10 +8,8 @@ Setup script for building the C++ extension module 'fast_solver'.
 Uses pybind11 for Python bindings and OpenMP for parallelization.
 """
 
-# Determine the include directory for pybind11
 pybind11_include = pybind11.get_include()
 
-# Define the extension module
 ext_modules = [
     Extension(
         "fast_solver",
