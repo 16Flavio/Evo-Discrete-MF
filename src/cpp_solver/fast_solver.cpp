@@ -275,19 +275,6 @@ double solve_matrix_imf(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Targ
     MatrixXd G = W.transpose() * W; 
     VectorXd W_norms_sq = G.diagonal(); 
 
-    HouseholderQR<MatrixXd> qr(W);
-    MatrixXd R_full = qr.matrixQR().triangularView<Upper>();
-    MatrixXd R = R_full.block(0, 0, r, r);
-    
-    MatrixXd R_invT = MatrixXd::Identity(r, r);
-    bool use_babai = true;
-    
-    if(std::abs(R.determinant()) < 1e-10) {
-        use_babai = false; 
-    } else {
-        R_invT = R.transpose().inverse();
-    }
-
     double total_error = 0.0;
 
     #pragma omp parallel reduction(+:total_error)
@@ -312,43 +299,7 @@ double solve_matrix_imf(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Targ
                 }
             }
 
-            VectorXi h_best_babai(r);
-            double best_babai_cost = 1e20;
-            
-            if (use_babai) {
-                VectorXd y_target = R_invT * p; 
-                VectorXi h_cand1(r);
-                for (int k = r - 1; k >= 0; --k) {
-                    double val = y_target(k);
-                    for (int i = k + 1; i < r; ++i) val -= R(k, i) * (double)h_cand1(i);
-                    double unconstrained = val / R(k, k);
-                    h_cand1(k) = std::max(L, std::min(U, (int)std::round(unconstrained)));
-                }
-                
-                h_best_babai = h_cand1;
-                best_babai_cost = (x - W * h_cand1.cast<double>()).squaredNorm();
-                
-                VectorXd y_real = R * h_real; 
-                VectorXi h_cand2(r);
-                for (int k = r - 1; k >= 0; --k) {
-                    double val = y_real(k);
-                    for (int i = k + 1; i < r; ++i) val -= R(k, i) * (double)h_cand2(i);
-                    double unconstrained = val / R(k, k);
-                    h_cand2(k) = std::max(L, std::min(U, (int)std::round(unconstrained)));
-                }
-
-                if (h_cand2 != h_cand1) {
-                    double cost2 = (x - W * h_cand2.cast<double>()).squaredNorm();
-                    if (cost2 < best_babai_cost) {
-                        h_best_babai = h_cand2;
-                    }
-                }
-
-            } else {
-                h_best_babai = h_real.array().round().cast<int>().cwiseMax(L).cwiseMin(U);
-            }
-
-            VectorXi h_final = h_best_babai;
+            VectorXi h_final = h_real.array().round().cast<int>().cwiseMax(L).cwiseMin(U);;
             integer_cd_imf(W, W_norms_sq, x, h_final, L, U, gen);
 
             Target.col(j) = h_final;
