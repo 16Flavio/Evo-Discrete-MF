@@ -520,102 +520,99 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
     
     MatrixXd XT = X.transpose();
     
-    #pragma omp parallel 
-    {
-        int thread_id = omp_get_thread_num();
-        unsigned int thread_seed = seed + (thread_id+1) * 9781;
-        mt19937 gen(thread_seed); 
-        uniform_int_distribution<> dist_idx(0, pop_size - 1);
-        uniform_real_distribution<> dist_prob(0.0, 1.0);
-        uniform_int_distribution<> dist_col(0, r - 1);
-        
-        #pragma omp for schedule(dynamic)
-        for (int i = 0; i < num_children; ++i) {
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < num_children; ++i) {
 
-            // 1. Tournament Selection
-            int best_p1 = -1; double best_f1 = 1e20;
-            for(int t=0; t<tournament_size; ++t) {
-                int idx = dist_idx(gen);
-                if (Pop_Fitness[idx] < best_f1) { best_f1 = Pop_Fitness[idx]; best_p1 = idx; }
-            }
-            
-            int best_p2 = -1; double best_f2 = 1e20;    
-            int second_p2 = -1; double second_f2 = 1e20; 
+        unsigned int iter_seed = seed + i * 9781; 
+        std::mt19937 gen(iter_seed);
+        std::uniform_int_distribution<> dist_idx(0, pop_size - 1);
+        std::uniform_real_distribution<> dist_prob(0.0, 1.0);
+        std::uniform_int_distribution<> dist_col(0, r - 1);
 
-            for(int t=0; t<tournament_size; ++t) {
-                int idx = dist_idx(gen);
-                double f = Pop_Fitness[idx];
-
-                if (f < best_f2) {
-                    if (idx != best_p2) { 
-                        second_f2 = best_f2;
-                        second_p2 = best_p2;
-                    }
-                    best_f2 = f;
-                    best_p2 = idx;
-                } 
-                else if (f < second_f2 && idx != best_p2) {
-                    second_f2 = f;
-                    second_p2 = idx;
-                }
-            }
-
-            if (best_p2 == best_p1) {
-                if (second_p2 != -1) {
-                    best_p2 = second_p2;
-                    best_f2 = second_f2;
-                } else {
-                    if (pop_size > 1) {
-                        do { best_p2 = dist_idx(gen); } while (best_p2 == best_p1);
-                        best_f2 = Pop_Fitness[best_p2];
-                    }
-                }
-            }
-
-            MatrixXi W1 = Pop_W[best_p1];
-            MatrixXi H1 = Pop_H[best_p1];
-            
-            MatrixXi W2 = Pop_W[best_p2];
-            MatrixXi H2 = Pop_H[best_p2];
-            
-            // Alignment
-            align_in_place(W1, W2, H2);
-
-            MatrixXi Child_W(m, r);
-            MatrixXi Child_H(r, H1.cols());
-
-            // 2. Crossover
-            
-            double prob_p1 = 0.5;
-
-            for(int k=0; k<r; ++k) {
-                if(dist_prob(gen) < prob_p1) {
-                    Child_W.col(k) = W1.col(k);
-                    Child_H.row(k) = H1.row(k);
-                } else {
-                    Child_W.col(k) = W2.col(k);
-                    Child_H.row(k) = H2.row(k);
-                }
-            }
-
-            // 4. Fast Optimization
-            double f_obj = 0.0;
-
-            tuple<MatrixXi, MatrixXi, double> opt_result;
-            opt_result = optimize_alternating_cpp(
-                X, Child_W, Child_H, 
-                LW, UW, LH, UH, 
-                1, 3600.0, mode_opti
-            );
-
-            tie(Child_W, Child_H, f_obj) = opt_result;
-
-            int dist_p1 = count_diff(Child_W, W1);
-            int dist_p2 = count_diff(Child_W, W2);
-            
-            results[i] = make_tuple(Child_W, Child_H, f_obj, best_p1, best_p2, dist_p1, dist_p2);
+        // 1. Tournament Selection
+        int best_p1 = -1; double best_f1 = 1e20;
+        for(int t=0; t<tournament_size; ++t) {
+            int idx = dist_idx(gen);
+            if (Pop_Fitness[idx] < best_f1) { best_f1 = Pop_Fitness[idx]; best_p1 = idx; }
         }
+        
+        int best_p2 = -1; double best_f2 = 1e20;    
+        int second_p2 = -1; double second_f2 = 1e20; 
+
+        for(int t=0; t<tournament_size; ++t) {
+            int idx = dist_idx(gen);
+            double f = Pop_Fitness[idx];
+
+            if (f < best_f2) {
+                if (idx != best_p2) { 
+                    second_f2 = best_f2;
+                    second_p2 = best_p2;
+                }
+                best_f2 = f;
+                best_p2 = idx;
+            } 
+            else if (f < second_f2 && idx != best_p2) {
+                second_f2 = f;
+                second_p2 = idx;
+            }
+        }
+
+        if (best_p2 == best_p1) {
+            if (second_p2 != -1) {
+                best_p2 = second_p2;
+                best_f2 = second_f2;
+            } else {
+                if (pop_size > 1) {
+                    do { best_p2 = dist_idx(gen); } while (best_p2 == best_p1);
+                    best_f2 = Pop_Fitness[best_p2];
+                }
+            }
+        }
+
+        MatrixXi W1 = Pop_W[best_p1];
+        MatrixXi H1 = Pop_H[best_p1];
+        
+        MatrixXi W2 = Pop_W[best_p2];
+        MatrixXi H2 = Pop_H[best_p2];
+        
+        // Alignment
+        align_in_place(W1, W2, H2);
+
+        MatrixXi Child_W(m, r);
+        MatrixXi Child_H(r, H1.cols());
+
+        // 2. Crossover
+        
+        double prob_p1 = 0.5;
+
+        for(int k=0; k<r; ++k) {
+            if(dist_prob(gen) < prob_p1) {
+                Child_W.col(k) = W1.col(k);
+                Child_H.row(k) = H1.row(k);
+            } else {
+                Child_W.col(k) = W2.col(k);
+                Child_H.row(k) = H2.row(k);
+            }
+        }
+
+        // 4. Fast Optimization
+        double f_obj = 0.0;
+
+        tuple<MatrixXi, MatrixXi, double> opt_result;
+        opt_result = optimize_alternating_cpp(
+            X, Child_W, Child_H, 
+            LW, UW, LH, UH, 
+            1, 3600.0, mode_opti
+        );
+
+        tie(Child_W, Child_H, f_obj) = opt_result;
+
+        int dist_p1 = count_diff(Child_W, W1);
+        int dist_p2 = count_diff(Child_W, W2);
+        
+        results[i] = make_tuple(Child_W, Child_H, f_obj, best_p1, best_p2, dist_p1, dist_p2);
     }
+    
     return results;
 }
 
