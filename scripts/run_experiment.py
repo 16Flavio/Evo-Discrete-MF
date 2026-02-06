@@ -2,6 +2,7 @@ import os
 import subprocess
 import time
 import re
+import statistics
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
@@ -103,7 +104,10 @@ def run_solver():
                 
                 print(f"  >> Config: Rank={rank}, Time={duration_str}")
 
+                errors = []
+
                 for run_i in range(1, NUM_RUNS + 1):
+
                     output_filename = f"{filename.replace('.txt', '')}_r{rank}_{duration_str}.txt"
                     output_path = output_dir_base / output_filename
 
@@ -117,7 +121,6 @@ def run_solver():
                         "--rank", str(rank),
                         "-n", "60",
                         "-s", "4",
-                        "-m", "0.0",
                         "--factorization-mode", matrix_type.upper(),
                     ]
 
@@ -130,13 +133,19 @@ def run_solver():
                         if match:
                             err_value = float(match.group(1))
                             print(f"Error detected = {err_value:.6f}")
+                            errors.append(err_value)
+
                     except subprocess.CalledProcessError as e:
                         print(f"     ERROR Run {run_i} on {filename}: {e}")
                     except KeyboardInterrupt:
                         print("\nManual stop detected. End of script.")
                         return
-                    
-                    break
+
+                std_dev = statistics.stdev(errors) if len(errors) > 1 else 0.0
+                print(f"mean : {sum(errors)/len(errors) if len(errors) != 0 else 0}")
+                print(f"std deviation : {std_dev}")
+                print(f"min : {min(errors) if len(errors) != 0 else 0}")
+                print(f"max : {max(errors) if len(errors) != 0 else 0}")
 
     print("\n--- All experiments completed ! ---")
 
