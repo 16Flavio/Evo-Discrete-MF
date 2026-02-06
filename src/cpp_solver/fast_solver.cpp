@@ -12,6 +12,7 @@
 #include <chrono>
 #include <numeric>
 #include <queue>
+#include <limits>
 
 namespace py = pybind11;
 using namespace Eigen;
@@ -396,30 +397,105 @@ double solve_matrix_bmf(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Targ
 }
 
 /**
- * Aligns columns of W2_to_align to match W1 logic.
+ * Computes the Hungarian Algorithm (Munkres) to find optimal assignment.
+ * Returns vector assign where assign[i] = j means row i maps to col j.
+ */
+static std::vector<int> hungarianMin(const MatrixXd& cost) {
+    const int n = static_cast<int>(cost.rows());
+    const double INF = std::numeric_limits<double>::infinity();
+    
+    // 1-based indexing used internally for standard implementation
+    std::vector<double> u(n + 1, 0.0), v(n + 1, 0.0);
+    std::vector<int> p(n + 1, 0), way(n + 1, 0);
+
+    for (int i = 1; i <= n; ++i) {
+        p[0] = i;
+        int j0 = 0;
+        std::vector<double> minv(n + 1, INF);
+        std::vector<char> used(n + 1, false);
+        do {
+            used[j0] = true;
+            int i0 = p[j0];
+            double delta = INF;
+            int j1 = 0;
+            for (int j = 1; j <= n; ++j) {
+                if (!used[j]) {
+                    // cost matrix is 0-indexed, algo 1-indexed
+                    double cur = cost(i0 - 1, j - 1) - u[i0] - v[j];
+                    if (cur < minv[j]) {
+                        minv[j] = cur;
+                        way[j] = j0;
+                    }
+                    if (minv[j] < delta) {
+                        delta = minv[j];
+                        j1 = j;
+                    }
+                }
+            }
+            for (int j = 0; j <= n; ++j) {
+                if (used[j]) {
+                    u[p[j]] += delta;
+                    v[j] -= delta;
+                } else {
+                    minv[j] -= delta;
+                }
+            }
+            j0 = j1;
+        } while (p[j0] != 0);
+
+        // Augmentation
+        do {
+            int j1 = way[j0];
+            p[j0] = p[j1];
+            j0 = j1;
+        } while (j0 != 0);
+    }
+
+    std::vector<int> assign(n);
+    for (int j = 1; j <= n; ++j) {
+        if (p[j] > 0) {
+            assign[p[j] - 1] = j - 1;
+        }
+    }
+    return assign;
+}
+
+/**
+ * Aligns columns of W2_to_align to match W1 logic using Hungarian Algorithm and Hamming distance.
  */
 void align_in_place(const MatrixXi& W1, MatrixXi& W2_to_align, MatrixXi& H2_to_align) {
     int r = (int)W1.cols();
-    MatrixXi W2_copy = W2_to_align; MatrixXi H2_copy = H2_to_align;
-    vector<bool> used(r, false);
-    for (int k1 = 0; k1 < r; ++k1) {
-        long long min_dist = -1; int best_k2 = -1;
-        for (int k2 = 0; k2 < r; ++k2) {
-            if (used[k2]) continue;
-            long long dist = (W1.col(k1) - W2_copy.col(k2)).squaredNorm();
-            if (min_dist == -1 || dist < min_dist) { min_dist = dist; best_k2 = k2; }
+    int m = (int)W1.rows();
+    
+    // 1. Build Cost Matrix (Hamming Distance)
+    MatrixXd C(r, r);
+    for(int i = 0; i < r; ++i) {
+        for(int j = 0; j < r; ++j) {
+            // Count differences between column i of W1 and column j of W2
+            int dist = 0;
+            for(int k = 0; k < m; ++k) {
+                if(W1(k, i) != W2_to_align(k, j)) {
+                    dist++;
+                }
+            }
+            C(i, j) = static_cast<double>(dist);
         }
-        if (best_k2 != -1) { 
-            used[best_k2] = true; 
-            W2_to_align.col(k1) = W2_copy.col(best_k2); 
-            H2_to_align.row(k1) = H2_copy.row(best_k2); 
-        } else {
-             for(int k=0; k<r; ++k) if(!used[k]) { 
-                 W2_to_align.col(k1) = W2_copy.col(k); 
-                 H2_to_align.row(k1) = H2_copy.row(k);
-                 used[k]=true; break; 
-             }
-        }
+    }
+
+    // 2. Solve Assignment Problem (Hungarian Algorithm)
+    // assignment[i] = j means W1 col i is best matched with W2 col j
+    std::vector<int> assignment = hungarianMin(C);
+
+    // 3. Reorder W2 and H2 based on assignment
+    MatrixXi W2_copy = W2_to_align;
+    MatrixXi H2_copy = H2_to_align;
+
+    for(int i = 0; i < r; ++i) {
+        int matched_col_idx = assignment[i];
+        
+        // We want the new i-th column to be the one that matched W1's i-th column
+        W2_to_align.col(i) = W2_copy.col(matched_col_idx);
+        H2_to_align.row(i) = H2_copy.row(matched_col_idx);
     }
 }
 
@@ -529,7 +605,7 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
             opt_result = optimize_alternating_cpp(
                 X, Child_W, Child_H, 
                 LW, UW, LH, UH, 
-                50, 3600.0, mode_opti
+                1, 3600.0, mode_opti
             );
 
             tie(Child_W, Child_H, f_obj) = opt_result;

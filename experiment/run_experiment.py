@@ -7,7 +7,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).parent.parent
 MAIN_SCRIPT = BASE_DIR / "main.py"
-RESULTS_BASE_DIR = BASE_DIR / "results"
+RESULTS_BASE_DIR = BASE_DIR / "experiment"
 
 DATA_DIRS_MAP = {
     "bmf": BASE_DIR / "data/bmf_matrix",
@@ -113,6 +113,8 @@ def run_solver():
 
                     print(f"     Launching Run {run_i}/{NUM_RUNS}...")
 
+                    current_seed = 41 + run_i
+
                     command = [
                         "python", str(MAIN_SCRIPT),
                         "-i", str(file_path),
@@ -122,6 +124,7 @@ def run_solver():
                         "-n", "60",
                         "-s", "4",
                         "--factorization-mode", matrix_type.upper(),
+                        "--seed", current_seed
                     ]
 
                     try:

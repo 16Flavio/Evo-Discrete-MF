@@ -35,94 +35,6 @@ def transpose_population(pop):
     """
     return [transpose_individual(p) for p in pop]
 
-def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=1, LH=0, UH=1, mode_opti=None):
-    """
-    Selects the N best diverse survivors.
-    If diversity is insufficient, fills the rest with mutations
-    rather than keeping duplicates.
-    """
-
-    m, n = X.shape
-
-    population.sort(key=lambda x: x[0])
-    
-    if not population:
-        return population, 0
-
-    survivors = []
-    survivors.append(population[0]) 
-
-    m, r = population[0][1][0].shape
-    min_pixels = int(m * r * min_diff_percent)
-    if min_pixels < 1: min_pixels = 1
-    
-    processed_count = 0
-    
-    for i in range(1, len(population)):
-        if len(survivors) >= N: break
-        
-        candidate = population[i]
-        W_cand = candidate[1][0]
-        
-        is_distinct = True
-        
-        check_window = max(20, int(len(survivors) * 0.5))
-        
-        start_check = max(0, len(survivors) - check_window)
-        
-        for k in range(start_check, len(survivors)):
-            survivor = survivors[k]
-            
-            if USE_CPP_DIST:
-                dist = get_aligned_distance(survivor[1][0].astype(np.int32), W_cand.astype(np.int32))
-            else:
-                dist = get_distance_py(survivor[1][0], W_cand)
-                
-            if dist < min_pixels:
-                is_distinct = False
-                break
-        
-        if is_distinct:
-            survivors.append(candidate)
-            
-    num_natural_survivors = len(survivors)
-
-    while len(survivors) < N:
-        num_candidates = 10
-        candidates = []
-        for _ in range(num_candidates):
-            W_cand = np.random.randint(LW, UW + 1, size=(m, r))
-            candidates.append(W_cand)
-        
-        reference_population = [s[1][0] for s in survivors[:min(len(survivors), 10)]]
-        
-        best_W_far = candidates[0]
-        max_min_distance = -1
-        
-        for W_c in candidates:
-            min_dist_to_group = float('inf')
-            
-            for W_ref in reference_population:
-                if USE_CPP_DIST:
-                    d = get_aligned_distance(W_ref.astype(np.int32), W_c.astype(np.int32))
-                else:
-                    d = get_distance_py(W_ref, W_c)
-                
-                if d < min_dist_to_group:
-                    min_dist_to_group = d
-            
-            if min_dist_to_group > max_min_distance:
-                max_min_distance = min_dist_to_group
-                best_W_far = W_c
-        
-        H_new = np.random.randint(LH, UH + 1, size=(r, n))
-        
-        H_final, f_final = optimizeHforW(X, best_W_far, H_new, LW, UW, LH, UH, mode_opti)
-        
-        survivors.append([f_final, (best_W_far, H_final)])
-
-    return survivors, num_natural_survivors
-
 def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tournament_size=4, debug_mode = False):
     """
     Main metaheuristic function for solving the matrix factorization problem.
@@ -156,9 +68,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
         if time.time() - start_time > TIME_LIMIT - 5: break
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
 
-        W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f, W_opt, H_rand, LW, UW, LH, UH, mode_opti, max_iters=10
-        )
+        H_opt, f = optimizeHforW(X, W_opt, H_rand, LW, UW, LH, UH, mode_opti)
 
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
         if child_hash not in seen_hashes:
@@ -188,8 +98,6 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
 
     iters_in_phase = 0
     
-    min_diff_percent = 0.001
-    
     if debug_mode:
         print(f"[DEBUG] Starting Metaheuristic with Phase: {current_phase}, Initial Best Fitness: {best_f:.6f}")
 
@@ -209,7 +117,6 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
                 current_phase = 'DIRECT'
                 population = transpose_population(population)
             iters_in_phase = 0
-            min_diff_percent = min(0.05, min_diff_percent * 1.5)
 
         if current_phase == 'DIRECT':
             active_X = X
@@ -231,10 +138,9 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
                 f_child = child[0]
                 W_child, H_child = child[1]
                 population.append([f_child, (W_child, H_child)])
-            
-            population, _ = select_diverse_survivors(active_X, population, N, min_diff_percent, G_L, G_U, P_L, P_U, mode_opti)
 
             population.sort(key=lambda x: x[0])
+            population = population[:N]
 
             current_best = population[0]
             
@@ -245,8 +151,6 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
                 else:
                     H_T, W_T = current_best[1]
                     best_W, best_H = W_T.T, H_T.T
-                
-                min_diff_percent = 0.001
                 
                 if best_f < global_best_f:
                     global_best_f = best_f
