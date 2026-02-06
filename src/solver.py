@@ -51,7 +51,7 @@ def select_diverse_survivors(X, population, N, min_diff_percent=0.001, LW=0, UW=
 
     survivors = []
     survivors.append(population[0]) 
-    
+
     m, r = population[0][1][0].shape
     min_pixels = int(m * r * min_diff_percent)
     if min_pixels < 1: min_pixels = 1
@@ -147,7 +147,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
         print("Debug Mode Activated: Detailed logs will be shown.")
         print("Initial Population Generation...")
 
-    pop_W_list = generate_population_W(X, r, N, LW, UW, LH, UH)
+    pop_W_list = generate_population_W(X, r, N, LW, UW, LH, UH, mode_opti)
     
     if debug_mode:
         print(f"Generated {len(pop_W_list)} initial W matrices.")
@@ -209,7 +209,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
                 current_phase = 'DIRECT'
                 population = transpose_population(population)
             iters_in_phase = 0
-            min_diff_percent = min(0.2, min_diff_percent * 1.5)
+            min_diff_percent = min(0.05, min_diff_percent * 1.5)
 
         if current_phase == 'DIRECT':
             active_X = X

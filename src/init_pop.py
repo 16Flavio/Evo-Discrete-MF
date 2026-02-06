@@ -1,6 +1,8 @@
 import numpy as np
 import time
 
+from .local_search import optimize_alternating_wrapper
+
 def initialize_column_sampling(X, r, LW, UW):
     """
     Initializes W by sampling columns from X based on their norms.
@@ -33,60 +35,7 @@ def perturb_W(W, mutation_rate, LW, UW):
         
     return W_new
 
-def optimizeH(X, WtW, WtX, H, LH, UH):
-    """
-    Optimizes H given fixed W using a simple least squares approach.
-    Rounds and clips the results to integer bounds.
-    """
-    m, n = X.shape
-    r = H.shape[1]
-    
-    for k in range(H.shape[0]):
-        hk = (WtX[k, :] - (WtW[k, :] @ H) + WtW[k, k] * H[k, :]) / (WtW[k, k] + 1e-16)
-        H[k, :] = np.maximum(LH, np.minimum(UH, hk))
-        
-    return H
-
-def als_bound(X, r, W_init, H_init, LW, UW, LH, UH, max_iter=10):
-    """
-    Alternating Least Squares (ALS) with bounds for integer matrices.
-    Alternates between updating W and H while respecting the bounds.
-    """
-    m, n = X.shape
-    r = W_init.shape[1]
-    W = W_init.astype(float)
-    H = H_init.astype(float)
-    
-    norm_X_sq = np.sum(X**2)
-
-    prev_error = float('inf')
-
-    iter = 0
-    while(iter < max_iter):
-        WtW = W.T @ W
-        WtX = W.T @ X
-
-        H = optimizeH(X, WtW, WtX, H, LH, UH)
-        
-        HHt = H @ H.T
-        HXt = H @ X.T
-
-        W = optimizeH(X.T, HHt, HXt, W.T, LW, UW).T
-
-        WtW = W.T @ W
-        WtX = W.T @ X
-
-        error = norm_X_sq - 2 * np.sum(WtX * H) + np.sum(WtW * HHt)
-
-        if abs(prev_error - error) < 1e-5:
-            break
-        prev_error = error
-
-        iter += 1
-    
-    return W, H
-
-def generate_population_W(X, r, N, LW, UW, LH, UH, config=None, verbose=False, perturbation_sigma=0.0):
+def generate_population_W(X, r, N, LW, UW, LH, UH, mode_opti, config=None, verbose=False, perturbation_sigma=0.0):
     """
     Generates the initial population of W matrices.
     Uses a mix of SVD, Greedy Residual, KMeans, NMF, and Column Sampling, 
@@ -95,13 +44,18 @@ def generate_population_W(X, r, N, LW, UW, LH, UH, config=None, verbose=False, p
     m, n = X.shape
     population_W = []
     seen_hashes = set()
+    best = 1e20
 
     for _ in range((N*25)//100):
         W_rand = np.random.randint(LW, UW + 1, size=(m, r))
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
-        W_opt, H_opt = als_bound(X, r, W_rand.astype(float), H_rand.astype(float), LW, UW, LH, UH, max_iter=100)
 
-        W_opt = np.round(W_opt).astype(int)
+        W_opt, H_opt, f = optimize_alternating_wrapper(X, W_rand, H_rand, LW, UW, LH, UH, mode_opti, max_iters=100)
+
+        if f < best:
+            best = f
+            best_W = W_opt
+            best_H = H_opt
 
         if W_opt.tobytes() not in seen_hashes:
             population_W.append(W_opt)
