@@ -68,8 +68,8 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, debu
         if time.time() - start_time > TIME_LIMIT - 5: break
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
 
-        W_opt, H_opt, f = optimize_alternating_wrapper(
-            X_f, W_opt, H_rand, LW, UW, LH, UH, mode_opti, max_iters=10
+        H_opt, f = optimizeHforW(
+            X_f, W_opt, H_rand, LW, UW, LH, UH, mode_opti
         )
 
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
@@ -127,7 +127,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, debu
             active_X = X.T
             G_L, G_U = LH, UH; P_L, P_U = LW, UW
 
-        for _ in range((N*10)//100):
+        for _ in range((N*100)//100):
             W_init = np.random.randint(G_L, G_U + 1, size=(active_X.shape[0], r))
             H_init = np.random.randint(P_L, P_U + 1, size=(r, active_X.shape[1]))
 
@@ -147,12 +147,8 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, debu
                 child_W, child_H, child_f, p1_idx, p2_idx, d1, d2 = child
                 if d1 <= d2:
                     target_idx = p1_idx
-                    other_idx = p2_idx
-                    dist_target = d1
                 else:
                     target_idx = p2_idx
-                    other_idx = p1_idx
-                    dist_target = d2
 
                 if child_f < population[target_idx][0]:
                     population[target_idx] = [child_f, (child_W, child_H)]
