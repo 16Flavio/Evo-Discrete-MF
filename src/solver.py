@@ -35,7 +35,7 @@ def transpose_population(pop):
     """
     return [transpose_individual(p) for p in pop]
 
-def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tournament_size=4, debug_mode = False):
+def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, debug_mode = False):
     """
     Main metaheuristic function for solving the matrix factorization problem.
     """
@@ -127,11 +127,19 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
             active_X = X.T
             G_L, G_U = LH, UH; P_L, P_U = LW, UW
 
+        for _ in range((N*10)//100):
+            W_init = np.random.randint(G_L, G_U + 1, size=(active_X.shape[0], r))
+            H_init = np.random.randint(P_L, P_U + 1, size=(r, active_X.shape[1]))
+
+            W_opti, H_opti, f = optimize_alternating_wrapper(active_X, W_init, H_init, G_L, G_U, P_L, P_U, mode_opti, max_iters=10)
+
+            population.append([f, (W_opti, H_opti)])
+
         temp_hashes = set() 
         children = generateNewGeneration(
-            temp_hashes, population, N//2, active_X, 
+            temp_hashes, population, len(population)//2, active_X, 
             G_L, G_U, P_L, P_U, mode_opti,
-            start_time, TIME_LIMIT, 0
+            start_time, TIME_LIMIT
         )
         
         if children:
@@ -156,6 +164,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
                             global_best_W, global_best_H = child_H.T.copy(), child_W.T.copy()
 
             population.sort(key=lambda x: x[0])
+            population = population[:N]
 
             current_best = population[0]
             

@@ -31,7 +31,6 @@ def main():
     parser.add_argument("-r", "--rank", help="Factorization rank.", type=int, default=10)
     parser.add_argument("-t", "--time_limit", help="Time limit (s). Default: 300.0", type=float, default=300.0)
     parser.add_argument("-n", "--population_size", help="Population size. Default: 50", type=int, default=50)
-    parser.add_argument("-s", "--tournament_size", help="Tournament size. Default: 3", type=int, default=3)
 
     parser.add_argument("--seed", help="Random seed for reproducibility. Default: None (Random)", type=int, default=None)
     
@@ -71,8 +70,7 @@ def main():
     W, H, f_val = metaheuristic(
         X, args.rank, LW, UW, LH, UH, args.factorization_mode,
         TIME_LIMIT=args.time_limit, 
-        N=args.population_size, 
-        tournament_size=args.tournament_size,
+        N=args.population_size,
         debug_mode=debug
     )
 

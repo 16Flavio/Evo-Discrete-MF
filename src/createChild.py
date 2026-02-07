@@ -19,7 +19,7 @@ def align_parents(W1, W2):
     else:
         return W2
 
-def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH, mode_opti, start, TIME_LIMIT, tournament_size):
+def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH, mode_opti, start, TIME_LIMIT):
     """
     Generates a new generation of children using C++ batch processing.
     It performs selection, crossover, and mutation in parallel.
@@ -36,7 +36,6 @@ def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH,
             X.astype(float),
             Pop_W, Pop_H, Pop_Fitness,
             int(num_child),
-            int(tournament_size),
             int(LW), int(UW), int(LH), int(UH),
             str(mode_opti),
             int(current_cpp_seed)

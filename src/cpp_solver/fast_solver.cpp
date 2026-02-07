@@ -516,16 +516,14 @@ tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
  */
 vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_batch(
     const MatrixXd& X, const vector<MatrixXi>& Pop_W, const vector<MatrixXi>& Pop_H,
-    const vector<double>& Pop_Fitness, int num_children, int tournament_size, int LW, int UW, int LH, int UH,
+    const vector<double>& Pop_Fitness, int num_children, int LW, int UW, int LH, int UH,
     string mode_opti, int seed
 ) {
-    // num_children should ideally be pop_size / 2 for this logic
     vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> results(num_children);
     int pop_size = (int)Pop_W.size();
     int m = (int)X.rows();
     int r = (int)Pop_W[0].cols();
     
-    // Create random permutation of population indices for disjoint pairs
     std::vector<int> perm(pop_size);
     std::iota(perm.begin(), perm.end(), 0);
     std::mt19937 g(seed);
@@ -540,8 +538,6 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
         std::mt19937 gen(iter_seed);
         std::uniform_real_distribution<> dist_prob(0.0, 1.0);
 
-        // Select Parents: Distinct pairs from the shuffled permutation
-        // Check bounds to be safe, though num_children should be <= pop_size/2
         int idx1 = (2 * i) % pop_size;
         int idx2 = (2 * i + 1) % pop_size;
 
@@ -556,13 +552,11 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
         MatrixXi H2 = Pop_H[best_p2];
         double best_f2 = Pop_Fitness[best_p2];
 
-        // Alignment
         align_in_place(W1, W2, H2);
 
         MatrixXi Child_W(m, r);
         MatrixXi Child_H(r, H1.cols());
 
-        // 2. Crossover
         double prob_p1 = 0.5;
 
         double total_error = best_f1 + best_f2;
@@ -580,31 +574,20 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
             }
         }
 
-        // 3. Fast Optimization
         double f_obj = 0.0;
 
-        if(mode_opti == "IMF"){
-            f_obj = solve_matrix_imf(X, Child_W, Child_H, LH, UH);
-        }else if(mode_opti == "BMF"){
-            f_obj = solve_matrix_bmf(X, Child_W, Child_H, LH, UH);
-        }else{
-            f_obj = solve_matrix_relu(X, Child_W, Child_H, LH, UH);
-        }
+        tuple<MatrixXi, MatrixXi, double> opt_result;
+        opt_result = optimize_alternating_cpp(
+            X, Child_W, Child_H, 
+            LW, UW, LH, UH, 
+            100, 3600.0, mode_opti
+        );
 
-        // tuple<MatrixXi, MatrixXi, double> opt_result;
-        // opt_result = optimize_alternating_cpp(
-        //     X, Child_W, Child_H, 
-        //     LW, UW, LH, UH, 
-        //     50, 3600.0, mode_opti
-        // );
+        tie(Child_W, Child_H, f_obj) = opt_result;
 
-        // tie(Child_W, Child_H, f_obj) = opt_result;
-
-        // Calculate distances to the specific parents used
         int dist_p1 = count_diff(Child_W, W1);
         int dist_p2 = count_diff(Child_W, W2);
         
-        // Return child and parent info
         results[i] = make_tuple(Child_W, Child_H, f_obj, best_p1, best_p2, dist_p1, dist_p2);
     }
     
@@ -705,7 +688,7 @@ PYBIND11_MODULE(fast_solver, m) {
     m.def("get_aligned_distance", &get_aligned_distance, py::call_guard<py::gil_scoped_release>());
     m.def("generate_children_batch", &generate_children_batch, py::call_guard<py::gil_scoped_release>(),
           py::arg("X"), py::arg("Pop_W"), py::arg("Pop_H"), py::arg("Pop_Fitness"),
-          py::arg("num_children"), py::arg("tournament_size"),
+          py::arg("num_children"),
           py::arg("LW"), py::arg("UW"), py::arg("LH"), py::arg("UH"),
           py::arg("mode_opti"), py::arg("seed") = 42
           );
