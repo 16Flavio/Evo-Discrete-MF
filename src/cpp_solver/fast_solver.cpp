@@ -507,17 +507,30 @@ tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
 
 /**
  * Batch generation of children using parallel processing.
+ * * LOGIC UPDATED:
+ * 1. Takes the population.
+ * 2. Shuffles indices [0...pop_size-1].
+ * 3. Forms distinct pairs (0,1), (2,3), etc.
+ * 4. Each pair produces one child.
+ * 5. Returns the child along with indices of parents and distances.
  */
 vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_batch(
     const MatrixXd& X, const vector<MatrixXi>& Pop_W, const vector<MatrixXi>& Pop_H,
     const vector<double>& Pop_Fitness, int num_children, int tournament_size, int LW, int UW, int LH, int UH,
     string mode_opti, int seed
 ) {
+    // num_children should ideally be pop_size / 2 for this logic
     vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> results(num_children);
     int pop_size = (int)Pop_W.size();
     int m = (int)X.rows();
     int r = (int)Pop_W[0].cols();
     
+    // Create random permutation of population indices for disjoint pairs
+    std::vector<int> perm(pop_size);
+    std::iota(perm.begin(), perm.end(), 0);
+    std::mt19937 g(seed);
+    std::shuffle(perm.begin(), perm.end(), g);
+
     MatrixXd XT = X.transpose();
     
     #pragma omp parallel for schedule(static)
@@ -525,56 +538,24 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
 
         unsigned int iter_seed = seed + i * 9781; 
         std::mt19937 gen(iter_seed);
-        std::uniform_int_distribution<> dist_idx(0, pop_size - 1);
         std::uniform_real_distribution<> dist_prob(0.0, 1.0);
-        std::uniform_int_distribution<> dist_col(0, r - 1);
 
-        // 1. Tournament Selection
-        int best_p1 = -1; double best_f1 = 1e20;
-        for(int t=0; t<tournament_size; ++t) {
-            int idx = dist_idx(gen);
-            if (Pop_Fitness[idx] < best_f1) { best_f1 = Pop_Fitness[idx]; best_p1 = idx; }
-        }
-        
-        int best_p2 = -1; double best_f2 = 1e20;    
-        int second_p2 = -1; double second_f2 = 1e20; 
+        // Select Parents: Distinct pairs from the shuffled permutation
+        // Check bounds to be safe, though num_children should be <= pop_size/2
+        int idx1 = (2 * i) % pop_size;
+        int idx2 = (2 * i + 1) % pop_size;
 
-        for(int t=0; t<tournament_size; ++t) {
-            int idx = dist_idx(gen);
-            double f = Pop_Fitness[idx];
-
-            if (f < best_f2) {
-                if (idx != best_p2) { 
-                    second_f2 = best_f2;
-                    second_p2 = best_p2;
-                }
-                best_f2 = f;
-                best_p2 = idx;
-            } 
-            else if (f < second_f2 && idx != best_p2) {
-                second_f2 = f;
-                second_p2 = idx;
-            }
-        }
-
-        if (best_p2 == best_p1) {
-            if (second_p2 != -1) {
-                best_p2 = second_p2;
-                best_f2 = second_f2;
-            } else {
-                if (pop_size > 1) {
-                    do { best_p2 = dist_idx(gen); } while (best_p2 == best_p1);
-                    best_f2 = Pop_Fitness[best_p2];
-                }
-            }
-        }
+        int best_p1 = perm[idx1];
+        int best_p2 = perm[idx2];
 
         MatrixXi W1 = Pop_W[best_p1];
         MatrixXi H1 = Pop_H[best_p1];
+        double best_f1 = Pop_Fitness[best_p1];
         
         MatrixXi W2 = Pop_W[best_p2];
         MatrixXi H2 = Pop_H[best_p2];
-        
+        double best_f2 = Pop_Fitness[best_p2];
+
         // Alignment
         align_in_place(W1, W2, H2);
 
@@ -582,8 +563,12 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
         MatrixXi Child_H(r, H1.cols());
 
         // 2. Crossover
-        
         double prob_p1 = 0.5;
+
+        double total_error = best_f1 + best_f2;
+        if (total_error > 1e-9) {
+            prob_p1 = best_f1 / total_error;
+        }
 
         for(int k=0; k<r; ++k) {
             if(dist_prob(gen) < prob_p1) {
@@ -595,21 +580,31 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
             }
         }
 
-        // 4. Fast Optimization
+        // 3. Fast Optimization
         double f_obj = 0.0;
 
-        tuple<MatrixXi, MatrixXi, double> opt_result;
-        opt_result = optimize_alternating_cpp(
-            X, Child_W, Child_H, 
-            LW, UW, LH, UH, 
-            1, 3600.0, mode_opti
-        );
+        if(mode_opti == "IMF"){
+            f_obj = solve_matrix_imf(X, Child_W, Child_H, LH, UH);
+        }else if(mode_opti == "BMF"){
+            f_obj = solve_matrix_bmf(X, Child_W, Child_H, LH, UH);
+        }else{
+            f_obj = solve_matrix_relu(X, Child_W, Child_H, LH, UH);
+        }
 
-        tie(Child_W, Child_H, f_obj) = opt_result;
+        // tuple<MatrixXi, MatrixXi, double> opt_result;
+        // opt_result = optimize_alternating_cpp(
+        //     X, Child_W, Child_H, 
+        //     LW, UW, LH, UH, 
+        //     50, 3600.0, mode_opti
+        // );
 
+        // tie(Child_W, Child_H, f_obj) = opt_result;
+
+        // Calculate distances to the specific parents used
         int dist_p1 = count_diff(Child_W, W1);
         int dist_p2 = count_diff(Child_W, W2);
         
+        // Return child and parent info
         results[i] = make_tuple(Child_W, Child_H, f_obj, best_p1, best_p2, dist_p1, dist_p2);
     }
     

@@ -47,7 +47,7 @@ def generateNewGeneration(seen_hashes, population, num_child, X, LW, UW, LH, UH,
             child_hash = (W_res.tobytes(), H_res.tobytes())
             if child_hash not in seen_hashes:
                 seen_hashes.add(child_hash)
-                children.append([f_res, (W_res, H_res), p1_idx, p2_idx, d1, d2])
+                children.append([W_res, H_res, f_res, p1_idx, p2_idx, d1, d2])
 
         return children
 

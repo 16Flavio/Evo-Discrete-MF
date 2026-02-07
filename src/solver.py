@@ -68,7 +68,9 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
         if time.time() - start_time > TIME_LIMIT - 5: break
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
 
-        H_opt, f = optimizeHforW(X, W_opt, H_rand, LW, UW, LH, UH, mode_opti)
+        W_opt, H_opt, f = optimize_alternating_wrapper(
+            X_f, W_opt, H_rand, LW, UW, LH, UH, mode_opti, max_iters=10
+        )
 
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
         if child_hash not in seen_hashes:
@@ -129,18 +131,31 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
         children = generateNewGeneration(
             temp_hashes, population, N//3, active_X, 
             G_L, G_U, P_L, P_U, mode_opti,
-            start_time, TIME_LIMIT, int(tournament_size)
+            start_time, TIME_LIMIT, 0
         )
         
         if children:
             for child in children:
-                if len(child) < 2: continue
-                f_child = child[0]
-                W_child, H_child = child[1]
-                population.append([f_child, (W_child, H_child)])
+                child_W, child_H, child_f, p1_idx, p2_idx, d1, d2 = child
+                if d1 <= d2:
+                    target_idx = p1_idx
+                    other_idx = p2_idx
+                    dist_target = d1
+                else:
+                    target_idx = p2_idx
+                    other_idx = p1_idx
+                    dist_target = d2
+
+                if child_f <= population[target_idx][0]:
+                    population[target_idx] = [child_f, (child_W, child_H)]
+                    if child_f < global_best_f:
+                        global_best_f = child_f
+                        if current_phase == 'DIRECT':
+                            global_best_W, global_best_H = child_W.copy(), child_H.copy()
+                        else:
+                            global_best_W, global_best_H = child_H.T.copy(), child_W.T.copy()
 
             population.sort(key=lambda x: x[0])
-            population = population[:N]
 
             current_best = population[0]
             
