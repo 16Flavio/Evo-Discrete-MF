@@ -109,7 +109,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
             print(f"[DEBUG] Iteration {iteration}, Best Fitness: {best_f:.6f}, Population Size: {len(population)}, Phase: {current_phase}")
         
         switch_triggered = False
-        if iters_in_phase > 30: switch_triggered = True
+        if iters_in_phase > 1: switch_triggered = True
             
         if switch_triggered:
             if current_phase == 'DIRECT':
@@ -129,7 +129,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
 
         temp_hashes = set() 
         children = generateNewGeneration(
-            temp_hashes, population, N//3, active_X, 
+            temp_hashes, population, N//2, active_X, 
             G_L, G_U, P_L, P_U, mode_opti,
             start_time, TIME_LIMIT, 0
         )
@@ -146,7 +146,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, tour
                     other_idx = p1_idx
                     dist_target = d2
 
-                if child_f <= population[target_idx][0]:
+                if child_f < population[target_idx][0]:
                     population[target_idx] = [child_f, (child_W, child_H)]
                     if child_f < global_best_f:
                         global_best_f = child_f
