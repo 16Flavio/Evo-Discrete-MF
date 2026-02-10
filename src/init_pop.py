@@ -50,15 +50,10 @@ def generate_population_W(X, r, N, LW, UW, LH, UH, mode_opti, config=None, verbo
         W_rand = np.random.randint(LW, UW + 1, size=(m, r))
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
 
-        W_opt, H_opt, f = optimize_alternating_wrapper(X, W_rand, H_rand, LW, UW, LH, UH, mode_opti, max_iters=100)
-
-        if f < best:
-            best = f
-            best_W = W_opt
-            best_H = H_opt
+        W_opt, H_opt, f = optimize_alternating_wrapper(X, W_rand, H_rand, LW, UW, LH, UH, mode_opti, max_iters=10)
 
         if W_opt.tobytes() not in seen_hashes:
-            population_W.append(W_opt)
+            population_W.append([f,(W_opt,H_opt)])
             seen_hashes.add(W_opt.tobytes())
 
     for _ in range(int(N*25)//100):
@@ -76,6 +71,8 @@ def generate_population_W(X, r, N, LW, UW, LH, UH, mode_opti, config=None, verbo
     while len(population_W) < int(N*8)//10 :
         if not seeds: break
         base = seeds[idx % len(seeds)]
+        if type(base) == list:
+            base = base[1][0]
         idx += 1
         rate = np.random.uniform(0.15, 0.40) 
         W_new = perturb_W(base, rate, LW, UW)

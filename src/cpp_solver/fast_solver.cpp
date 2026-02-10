@@ -559,10 +559,10 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
 
         double prob_p1 = 0.5;
 
-        double total_error = best_f1 + best_f2;
-        if (total_error > 1e-9) {
-            prob_p1 = best_f1 / total_error;
-        }
+        // double total_error = best_f1 + best_f2;
+        // if (total_error > 1e-9) {
+        //     prob_p1 = best_f1 / total_error;
+        // }
 
         for(int k=0; k<r; ++k) {
             if(dist_prob(gen) < prob_p1) {
@@ -580,7 +580,7 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
         opt_result = optimize_alternating_cpp(
             X, Child_W, Child_H, 
             LW, UW, LH, UH, 
-            100, 3600.0, mode_opti
+            10, 3600.0, mode_opti
         );
 
         tie(Child_W, Child_H, f_obj) = opt_result;

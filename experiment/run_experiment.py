@@ -10,11 +10,10 @@ MAIN_SCRIPT = BASE_DIR / "main.py"
 RESULTS_BASE_DIR = BASE_DIR / "experiment"
 
 DATA_DIRS_MAP = {
-    "bmf": BASE_DIR / "data/bmf_matrix",
-    "imf": BASE_DIR / "data/imf_matrix"
+    "bmf": BASE_DIR / "data/bmf_matrix"
 }
 
-NUM_RUNS = 30
+NUM_RUNS = 10
 
 def get_configurations(filename, matrix_type):
     """
@@ -33,25 +32,6 @@ def get_configurations(filename, matrix_type):
             for r in ranks:
                 for t in times:
                     configs.append({"rank": r, "time": t})
-    
-    elif matrix_type == "imf":
-        time_imf = 300 
-        
-        if "instance1" in filename:
-            configs.append({"rank": 2, "time": time_imf})
-        elif "instance2" in filename:
-            configs.append({"rank": 5, "time": time_imf})
-        elif "instance3" in filename:
-            configs.append({"rank": 5, "time": time_imf})
-        elif "instance4" in filename:
-            configs.append({"rank": 10, "time": time_imf})
-        elif "instance5" in filename:
-            configs.append({"rank": 10, "time": 2400})
-        elif "Houdain" in filename:
-            configs.append({"rank": 10, "time": time_imf})
-        else:
-            print(f"[INFO] Generic configuration applied for {filename} (r=10, 5min)")
-            configs.append({"rank": 10, "time": 300})
             
     return configs
 
@@ -108,6 +88,13 @@ def run_solver():
 
                 for run_i in range(1, NUM_RUNS + 1):
 
+                    dataset_name = Path(filename).stem
+                    report_filename = f"report_experiment_BMF/report_{dataset_name}_r{config['rank']}_{config['time']}seconds.txt"
+                    report_path = RESULTS_BASE_DIR / report_filename
+
+                    if os.path.exists(report_path):
+                        break
+
                     output_filename = f"{filename.replace('.txt', '')}_r{rank}_{duration_str}.txt"
                     output_path = output_dir_base / output_filename
 
@@ -121,10 +108,9 @@ def run_solver():
                         "-o", str(output_path),
                         "--time", str(time_limit),
                         "--rank", str(rank),
-                        "-n", "60",
-                        "-s", "4",
+                        "-n", "50",
                         "--factorization-mode", matrix_type.upper(),
-                        "--seed", current_seed
+                        "--seed", str(current_seed)
                     ]
 
                     try:
@@ -143,12 +129,35 @@ def run_solver():
                     except KeyboardInterrupt:
                         print("\nManual stop detected. End of script.")
                         return
+                if len(errors) > 0:
+                    mean_val = sum(errors) / len(errors)
+                    std_dev = statistics.stdev(errors) if len(errors) > 1 else 0.0
+                    min_val = min(errors)
+                    max_val = max(errors)
 
-                std_dev = statistics.stdev(errors) if len(errors) > 1 else 0.0
-                print(f"mean : {sum(errors)/len(errors) if len(errors) != 0 else 0}")
-                print(f"std deviation : {std_dev}")
-                print(f"min : {min(errors) if len(errors) != 0 else 0}")
-                print(f"max : {max(errors) if len(errors) != 0 else 0}")
+                    print(f"mean : {mean_val}")
+                    print(f"std deviation : {std_dev}")
+                    print(f"min : {min_val}")
+                    print(f"max : {max_val}")
+                    
+                    try:
+                        with open(report_path, "w") as f_report:
+                            f_report.write(f"Dataset: {dataset_name}\n")
+                            f_report.write(f"Rank: {config['rank']}\n")
+                            f_report.write(f"Time Limit: {config['time']} seconds\n")
+                            f_report.write(f"Total Runs: {len(errors)}/{NUM_RUNS}\n")
+                            f_report.write("-" * 30 + "\n")
+                            f_report.write(f"Mean: {mean_val}\n")
+                            f_report.write(f"Std Deviation: {std_dev}\n")
+                            f_report.write(f"Min: {min_val}\n")
+                            f_report.write(f"Max: {max_val}\n")
+                            f_report.write("-" * 30 + "\n")
+                            f_report.write("Raw Values:\n")
+                            f_report.write(str(errors))
+                        
+                        print(f"Report saved to: {report_path}")
+                    except Exception as e:
+                        print(f"Error saving report: {e}")
 
     print("\n--- All experiments completed ! ---")
 

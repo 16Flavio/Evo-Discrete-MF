@@ -68,9 +68,14 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, debu
         if time.time() - start_time > TIME_LIMIT - 5: break
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
 
-        H_opt, f = optimizeHforW(
-            X_f, W_opt, H_rand, LW, UW, LH, UH, mode_opti
-        )
+        if type(W_opt) != list:
+            H_opt, f = optimizeHforW(
+                X_f, W_opt, H_rand, LW, UW, LH, UH, mode_opti
+            )
+        else:
+            f = W_opt[0]
+            H_opt = W_opt[1][1]
+            W_opt = W_opt[1][0]
 
         child_hash = (W_opt.tobytes(), H_opt.tobytes())
         if child_hash not in seen_hashes:
@@ -127,11 +132,28 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, debu
             active_X = X.T
             G_L, G_U = LH, UH; P_L, P_U = LW, UW
 
-        for _ in range((N*100)//100):
-            W_init = np.random.randint(G_L, G_U + 1, size=(active_X.shape[0], r))
-            H_init = np.random.randint(P_L, P_U + 1, size=(r, active_X.shape[1]))
+        best_ind = min(population, key=lambda x: x[0])
+        best_W, best_H = best_ind[1]
+        for _ in range((N*10)//100):
+            noise_W = np.random.randint(-(G_U-G_L), (G_U-G_L) + 1, size=best_W.shape)
+            noise_H = np.random.randint(-(P_U-P_L), (P_U-P_L) + 1, size=best_H.shape)
+            
+            W_init = np.clip(best_W + noise_W, G_L, G_U)
+            H_init = np.clip(best_H + noise_H, P_L, P_U)
 
-            W_opti, H_opti, f = optimize_alternating_wrapper(active_X, W_init, H_init, G_L, G_U, P_L, P_U, mode_opti, max_iters=10)
+            W_opti, H_opti, f = optimize_alternating_wrapper(
+                active_X, W_init, H_init, G_L, G_U, P_L, P_U, mode_opti, max_iters=1
+            )
+
+            population.append([f, (W_opti, H_opti)])
+
+        for _ in range((N*10)//100):
+            W_init = np.random.randint(G_L, G_U + 1, size=best_W.shape)
+            H_init = np.random.randint(P_L, P_U + 1, size=best_H.shape)
+
+            W_opti, H_opti, f = optimize_alternating_wrapper(
+                active_X, W_init, H_init, G_L, G_U, P_L, P_U, mode_opti, max_iters=5
+            )
 
             population.append([f, (W_opti, H_opti)])
 
