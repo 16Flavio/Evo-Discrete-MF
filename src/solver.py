@@ -42,7 +42,9 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, debu
 
     start_time = time.time()
     m, n = X.shape
+    XT = X.T
     X_f = X.astype(float)
+    XT_f = X_f.T
     
     population = []
     seen_hashes = set()
@@ -127,9 +129,15 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, debu
 
         if current_phase == 'DIRECT':
             active_X = X
+            active_X_f = X_f
+            active_XT = XT
+            active_XT_f = XT_f
             G_L, G_U = LW, UW; P_L, P_U = LH, UH
         else:
-            active_X = X.T
+            active_X = XT
+            active_X_f = XT_f
+            active_XT = X
+            active_XT_f = X_f
             G_L, G_U = LH, UH; P_L, P_U = LW, UW
 
         best_ind = min(population, key=lambda x: x[0])
@@ -142,7 +150,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, debu
             H_init = np.clip(best_H + noise_H, P_L, P_U)
 
             W_opti, H_opti, f = optimize_alternating_wrapper(
-                active_X, W_init, H_init, G_L, G_U, P_L, P_U, mode_opti, max_iters=1
+                active_X_f, active_XT_f, W_init, H_init, G_L, G_U, P_L, P_U, mode_opti, max_iters=1
             )
 
             population.append([f, (W_opti, H_opti)])
@@ -152,14 +160,14 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, debu
             H_init = np.random.randint(P_L, P_U + 1, size=best_H.shape)
 
             W_opti, H_opti, f = optimize_alternating_wrapper(
-                active_X, W_init, H_init, G_L, G_U, P_L, P_U, mode_opti, max_iters=5
+                active_X_f, active_XT_f, W_init, H_init, G_L, G_U, P_L, P_U, mode_opti, max_iters=5
             )
 
             population.append([f, (W_opti, H_opti)])
 
         temp_hashes = set() 
         children = generateNewGeneration(
-            temp_hashes, population, len(population)//2, active_X, 
+            temp_hashes, population, len(population)//2, active_X_f, active_XT_f,
             G_L, G_U, P_L, P_U, mode_opti,
             start_time, TIME_LIMIT
         )
@@ -210,7 +218,7 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, debu
 
     if remaining > 1.0:
         final_W, final_H, final_f = optimize_alternating_wrapper(
-            X_f, final_W, final_H, LW, UW, LH, UH, mode_opti, max_iters=2000, time_limit=remaining
+            X_f, XT_f, final_W, final_H, LW, UW, LH, UH, mode_opti, max_iters=2000, time_limit=remaining
         )
     
     if final_f < global_best_f:

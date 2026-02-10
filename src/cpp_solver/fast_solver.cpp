@@ -501,7 +501,7 @@ void align_in_place(const MatrixXi& W1, MatrixXi& W2_to_align, MatrixXi& H2_to_a
 
 // Forward declaration
 tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
-    MatrixXd X, MatrixXi W_init, MatrixXi H_init, 
+    const MatrixXd& X, const MatrixXd& XT, MatrixXi W_init, MatrixXi H_init, 
     int LW, int UW, int LH, int UH, 
     int max_global_iters, double time_limit_seconds, string mode_opti);
 
@@ -515,7 +515,7 @@ tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
  * 5. Returns the child along with indices of parents and distances.
  */
 vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_batch(
-    const MatrixXd& X, const vector<MatrixXi>& Pop_W, const vector<MatrixXi>& Pop_H,
+    const MatrixXd& X, const MatrixXd& XT, const vector<MatrixXi>& Pop_W, const vector<MatrixXi>& Pop_H,
     const vector<double>& Pop_Fitness, int num_children, int LW, int UW, int LH, int UH,
     string mode_opti, int seed
 ) {
@@ -528,8 +528,6 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
     std::iota(perm.begin(), perm.end(), 0);
     std::mt19937 g(seed);
     std::shuffle(perm.begin(), perm.end(), g);
-
-    MatrixXd XT = X.transpose();
     
     #pragma omp parallel for schedule(static)
     for (int i = 0; i < num_children; ++i) {
@@ -578,7 +576,7 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
 
         tuple<MatrixXi, MatrixXi, double> opt_result;
         opt_result = optimize_alternating_cpp(
-            X, Child_W, Child_H, 
+            X, XT, Child_W, Child_H, 
             LW, UW, LH, UH, 
             10, 3600.0, mode_opti
         );
@@ -600,7 +598,7 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
  * Main alternating optimization function exposed to Python.
  */
 tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
-    MatrixXd X, MatrixXi W_init, MatrixXi H_init, 
+    const MatrixXd& X, const MatrixXd& XT, MatrixXi W_init, MatrixXi H_init, 
     int LW, int UW, int LH, int UH, 
     int max_global_iters, double time_limit_seconds, string mode_opti) {
 
@@ -609,7 +607,6 @@ tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
     MatrixXi W = W_init;
     MatrixXi H = H_init;
     double f_obj = 1e20;
-    MatrixXd XT = X.transpose();
 
     for (int global_iter = 0; global_iter < max_global_iters; ++global_iter) {
         auto current_time = chrono::high_resolution_clock::now();
@@ -679,7 +676,7 @@ PYBIND11_MODULE(fast_solver, m) {
     m.doc() = "Solver C++ FactInZ";
     m.def("optimize_h", &optimize_h_cpp, py::call_guard<py::gil_scoped_release>());
     m.def("optimize_alternating", &optimize_alternating_cpp, py::call_guard<py::gil_scoped_release>(),
-          py::arg("X"), py::arg("W_init"), py::arg("H_init"), 
+          py::arg("X"), py::arg("XT"), py::arg("W_init"), py::arg("H_init"), 
           py::arg("LW"), py::arg("UW"), py::arg("LH"), py::arg("UH"), 
           py::arg("max_global_iters"), py::arg("time_limit_seconds") = 3600.0,
           py::arg("mode_opti") = "IMF"
@@ -687,7 +684,7 @@ PYBIND11_MODULE(fast_solver, m) {
     m.def("align_parents_cpp", &align_parents_cpp, py::call_guard<py::gil_scoped_release>());
     m.def("get_aligned_distance", &get_aligned_distance, py::call_guard<py::gil_scoped_release>());
     m.def("generate_children_batch", &generate_children_batch, py::call_guard<py::gil_scoped_release>(),
-          py::arg("X"), py::arg("Pop_W"), py::arg("Pop_H"), py::arg("Pop_Fitness"),
+          py::arg("X"), py::arg("XT"), py::arg("Pop_W"), py::arg("Pop_H"), py::arg("Pop_Fitness"),
           py::arg("num_children"),
           py::arg("LW"), py::arg("UW"), py::arg("LH"), py::arg("UH"),
           py::arg("mode_opti"), py::arg("seed") = 42

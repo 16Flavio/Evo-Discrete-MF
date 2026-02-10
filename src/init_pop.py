@@ -45,12 +45,14 @@ def generate_population_W(X, r, N, LW, UW, LH, UH, mode_opti, config=None, verbo
     population_W = []
     seen_hashes = set()
     best = 1e20
+    X_f = X.astype(float)
+    XT_f = X_f.T
 
     for _ in range((N*25)//100):
         W_rand = np.random.randint(LW, UW + 1, size=(m, r))
         H_rand = np.random.randint(LH, UH + 1, size=(r, n))
 
-        W_opt, H_opt, f = optimize_alternating_wrapper(X, W_rand, H_rand, LW, UW, LH, UH, mode_opti, max_iters=10)
+        W_opt, H_opt, f = optimize_alternating_wrapper(X_f, XT_f, W_rand, H_rand, LW, UW, LH, UH, mode_opti, max_iters=10)
 
         if W_opt.tobytes() not in seen_hashes:
             population_W.append([f,(W_opt,H_opt)])
