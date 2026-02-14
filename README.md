@@ -146,7 +146,7 @@ The output file will contain:
 ```
 Evo-Discrete-MF/
 ├── data/                   # Input datasets
-├── experiments/            # Output solutions
+├── experiment/            # Output solutions
 ├── src/                    # Source code
 │   ├── cpp_solver/         # C++ source code & setup script
 │   ├── solver.py           # Main metaheuristic logic
