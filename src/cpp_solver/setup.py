@@ -21,7 +21,7 @@ ext_modules = [
             os.path.join(sys.prefix, 'Library', 'include') 
         ],
         language="c++",
-        extra_compile_args=["/O2", "/openmp"] if sys.platform == "win32" else ["-O3", "-fopenmp"],
+        extra_compile_args=["/O2", "/openmp", "/arch:AVX2", "/fp:fast"] if sys.platform == "win32" else ["-O3", "-fopenmp"],
         extra_link_args=[] if sys.platform == "win32" else ["-fopenmp"],
     ),
 ]

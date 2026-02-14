@@ -76,7 +76,6 @@ python main.py -i data/imf_matrix/instance_1.txt -o results/sol_1.txt -r 10 -t 6
 | **Time Limit** | `-t`, `--time_limit` | float | `300.0` | Maximum execution time in seconds. |
 | **Mode** | `--factorization-mode` | str | `IMF` | Factorization mode: `IMF`, `BMF`, or `RELU`. |
 | **Population** | `-n`, `--population_size` | int | `50` | Size of the population for the genetic algorithm. |
-| **Tournament** | `-s`, `--tournament_size` | int | `3` | Tournament size for selection in the genetic algorithm. |
 | **Seed** | `--seed` | int | `None` | Random seed for reproducibility. |
 | **Debug** | `--debug-mode` | flag | `False` | Enable verbose debug output. |
 
@@ -101,12 +100,53 @@ The output file will contain:
 2. The matrix W (m rows).
 3. The matrix H (r rows).
 
+### Exemple of experiment
+
+## ReLU 
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="experiment/result_experiment_RELU/16OriginalImages.png" width="200px;" alt="Original"/>
+      <br />
+      <b>Original Images</b><br>
+    </td>
+    <td align="center">
+      <img src="experiment/result_experiment_RELU/16ReconstructedImages-ReLuNMD_r5.png" width="200px;" alt="ReLU-NMD"/>
+      <br />
+      <b>ReLU-NMD r=5 0.43 MB</b><br>
+    </td>
+    <td align="center">
+      <img src="experiment/result_experiment_RELU/16ReconstructedImages-I-ReLu-NMD_r40.png" width="200px;" alt="I-ReLU-NMD"/>
+      <br />
+      <b>I-ReLU-NMD r=40 0.43 MB</b><br>
+    </td>
+  </tr>
+</table>
+
+## IMF
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="experiment/result_experiment_kodak/reconstruction_QMF.png" width="300px;" alt="QMF"/>
+      <br />
+      <b>QMF r=40 bounds=[0,15]</b><br>
+    </td>
+    <td align="center">
+      <img src="experiment/result_experiment_kodak/reconstruction_EvoIMF.png" width="300px;" alt="EvoMF"/>
+      <br />
+      <b>EvoMF r=40 bounds=[0,15]</b><br>
+    </td>
+  </tr>
+</table>
+
 ## Project Structure
 
 ```
 Evo-Discrete-MF/
 ├── data/                   # Input datasets
-├── results/                # Output solutions
+├── experiments/            # Output solutions
 ├── src/                    # Source code
 │   ├── cpp_solver/         # C++ source code & setup script
 │   ├── solver.py           # Main metaheuristic logic

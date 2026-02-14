@@ -58,7 +58,7 @@ int count_diff(const MatrixXi& A, const MatrixXi& B) {
  * Solves the exact minimization problem for ReLU factorization component.
  * Finds the optimal value for a single variable given others fixed.
  */
-double findmin_relu_exact(const VectorXd& a_vec, const VectorXd& b_vec, const VectorXd& c_vec, AcdWorkspace& ws) {
+double findmin_relu_exact(const VectorXd& a_vec, const VectorXd& b_vec, const VectorXd& c_vec, AcdWorkspace& ws, double L, double U) {
     int m = (int)a_vec.size();
     int nnz = 0;
     
@@ -105,10 +105,23 @@ double findmin_relu_exact(const VectorXd& a_vec, const VectorXd& b_vec, const Ve
         }
     }
 
-    double xmin = (std::abs(tq) > 1e-16) ? -tl / (2 * tq) : 0.0;
     double bp0 = ws.breakpts[ws.p[0]];
-    double xopt = (xmin < bp0) ? xmin : bp0;
-    double yopt = ti + tl * xopt + tq * xopt * xopt;
+    double xopt_candidate;
+    double yopt = 1e100;
+    double xopt = L;
+
+    double effective_U_left = std::min(U, bp0);
+    
+    if (L <= effective_U_left) {
+        double xmin = (std::abs(tq) > 1e-16) ? -tl / (2 * tq) : 0.0;
+        
+        if (xmin < L) xopt_candidate = L;
+        else if (xmin > effective_U_left) xopt_candidate = effective_U_left;
+        else xopt_candidate = xmin;
+        
+        yopt = ti + tl * xopt_candidate + tq * xopt_candidate * xopt_candidate;
+        xopt = xopt_candidate;
+    }
 
     for(int k=0; k<nnz; ++k) {
         double sg = ws.sga[k];
@@ -116,17 +129,20 @@ double findmin_relu_exact(const VectorXd& a_vec, const VectorXd& b_vec, const Ve
         tl += sg * ws.tl_term[k];
         tq += sg * ws.aa[k];
         
-        xmin = (std::abs(tq) > 1e-16) ? -tl / (2 * tq) : 0.0;
-        
         double current_bp = ws.breakpts[ws.p[k]];
         double next_bp = (k + 1 < nnz) ? ws.breakpts[ws.p[k+1]] : 1e20;
         
+        double start = std::max(current_bp, L);
+        double end = std::min(next_bp, U);
+
+        if (start > end) continue;
+
+        double xmin = (std::abs(tq) > 1e-16) ? -tl / (2 * tq) : 0.0;
+        
         double xt;
-        if (xmin > current_bp && xmin < next_bp) {
-            xt = xmin;
-        } else {
-            xt = current_bp;
-        }
+        if (xmin < start) xt = start;
+        else if (xmin > end) xt = end;
+        else xt = xmin;
         
         double yval = ti + tl * xt + tq * xt * xt;
         if (yval < yopt) {
@@ -134,6 +150,7 @@ double findmin_relu_exact(const VectorXd& a_vec, const VectorXd& b_vec, const Ve
             xopt = xt;
         }
     }
+    
     return xopt;
 }
 
@@ -147,7 +164,7 @@ void integer_cd_relu(const MatrixXd& W, const VectorXd& X_col, VectorXi& h_int, 
     std::vector<int> indices(r);
     std::iota(indices.begin(), indices.end(), 0);
 
-    int max_passes = 3; 
+    int max_passes = 5;
     for(int pass=0; pass<max_passes; ++pass) {
         std::shuffle(indices.begin(), indices.end(), gen);
 
@@ -156,9 +173,9 @@ void integer_cd_relu(const MatrixXd& W, const VectorXd& X_col, VectorXi& h_int, 
             double h_old = (double)h_int(k);
             VectorXd b_vec = wh - W.col(k) * h_old;
             
-            double h_opt_cont = findmin_relu_exact(W.col(k), b_vec, X_col, ws);
-            int h_new = std::max(L, std::min(U, (int)std::round(h_opt_cont)));
-            
+            double h_opt_cont = findmin_relu_exact(W.col(k), b_vec, X_col, ws, (double)L, (double)U);
+            int h_new = (int)std::round(h_opt_cont);
+
             if (h_new != h_int(k)) {
                 double diff = (double)h_new - h_old;
                 wh += W.col(k) * diff; 
@@ -217,7 +234,7 @@ double solve_matrix_relu(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Tar
     int r = (int)Fixed.cols();
 
     double total_error = 0.0;
-    int acd_iter = 10; 
+    int acd_iter = 5; 
 
     #pragma omp parallel reduction(+:total_error)
     {
@@ -239,8 +256,7 @@ double solve_matrix_relu(const MatrixXd& X, const MatrixXi& Fixed, MatrixXi& Tar
                     double h_old = h_col(k);
                     VectorXd b_vec = wh_col - W.col(k) * h_old;
                     
-                    double h_new = findmin_relu_exact(W.col(k), b_vec, X_col, ws);
-                    h_new = std::max((double)L, std::min((double)U, h_new));
+                    double h_new = findmin_relu_exact(W.col(k), b_vec, X_col, ws, (double)L, (double)U);
 
                     if(std::abs(h_new - h_old) > 1e-6) {
                         h_col(k) = h_new;
@@ -463,7 +479,7 @@ static std::vector<int> hungarianMin(const MatrixXd& cost) {
 /**
  * Aligns columns of W2_to_align to match W1 logic using Hungarian Algorithm and Hamming distance.
  */
-void align_in_place(const MatrixXi& W1, MatrixXi& W2_to_align, MatrixXi& H2_to_align) {
+void align_in_place(const MatrixXi& W1, MatrixXi& W2_to_align, MatrixXi& H2_to_align, string mode_opti) {
     int r = (int)W1.cols();
     int m = (int)W1.rows();
     
@@ -472,13 +488,15 @@ void align_in_place(const MatrixXi& W1, MatrixXi& W2_to_align, MatrixXi& H2_to_a
     for(int i = 0; i < r; ++i) {
         for(int j = 0; j < r; ++j) {
             // Count differences between column i of W1 and column j of W2
-            int dist = 0;
-            for(int k = 0; k < m; ++k) {
-                if(W1(k, i) != W2_to_align(k, j)) {
-                    dist++;
-                }
+            if(mode_opti == "BMF"){
+                C(i, j) = static_cast<double>(
+                    (W1.col(i).array() != W2_to_align.col(j).array()).count()
+                );
+            }else{
+                C(i, j) = static_cast<double>(
+                    (W1.col(i) - W2_to_align.col(j)).lpNorm<1>()
+                );
             }
-            C(i, j) = static_cast<double>(dist);
         }
     }
 
@@ -505,6 +523,8 @@ tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
     int LW, int UW, int LH, int UH, 
     int max_global_iters, double time_limit_seconds, string mode_opti);
 
+int get_aligned_distance(const MatrixXi& W1, MatrixXi W2, string mode_opti);
+
 /**
  * Batch generation of children using parallel processing.
  * * LOGIC UPDATED:
@@ -517,7 +537,7 @@ tuple<MatrixXi, MatrixXi, double> optimize_alternating_cpp(
 vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_batch(
     const MatrixXd& X, const MatrixXd& XT, const vector<MatrixXi>& Pop_W, const vector<MatrixXi>& Pop_H,
     const vector<double>& Pop_Fitness, int num_children, int LW, int UW, int LH, int UH,
-    string mode_opti, int seed
+    string mode_opti, int seed, double remaining_time
 ) {
     vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> results(num_children);
     int pop_size = (int)Pop_W.size();
@@ -550,17 +570,12 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
         MatrixXi H2 = Pop_H[best_p2];
         double best_f2 = Pop_Fitness[best_p2];
 
-        align_in_place(W1, W2, H2);
+        align_in_place(W1, W2, H2, mode_opti);
 
         MatrixXi Child_W(m, r);
         MatrixXi Child_H(r, H1.cols());
 
         double prob_p1 = 0.5;
-
-        // double total_error = best_f1 + best_f2;
-        // if (total_error > 1e-9) {
-        //     prob_p1 = best_f1 / total_error;
-        // }
 
         for(int k=0; k<r; ++k) {
             if(dist_prob(gen) < prob_p1) {
@@ -578,13 +593,13 @@ vector<tuple<MatrixXi, MatrixXi, double, int, int, int, int>> generate_children_
         opt_result = optimize_alternating_cpp(
             X, XT, Child_W, Child_H, 
             LW, UW, LH, UH, 
-            10, 3600.0, mode_opti
+            10, remaining_time/num_children, mode_opti
         );
 
         tie(Child_W, Child_H, f_obj) = opt_result;
 
-        int dist_p1 = count_diff(Child_W, W1);
-        int dist_p2 = count_diff(Child_W, W2);
+        int dist_p1 = get_aligned_distance(Child_W, W1, mode_opti);
+        int dist_p2 = get_aligned_distance(Child_W, W2, mode_opti);
         
         results[i] = make_tuple(Child_W, Child_H, f_obj, best_p1, best_p2, dist_p1, dist_p2);
     }
@@ -660,16 +675,20 @@ pair<MatrixXi, double> optimize_h_cpp(MatrixXd X, MatrixXd W, int LW, int UW, in
     return {H, f};
 }
 
-MatrixXi align_parents_cpp(MatrixXi W1, MatrixXi W2) {
+MatrixXi align_parents_cpp(MatrixXi W1, MatrixXi W2, string mode_opti) {
     MatrixXi W2_copy = W2; MatrixXi H_dummy = MatrixXi::Zero(W2.cols(), 1); 
-    align_in_place(W1, W2_copy, H_dummy);
+    align_in_place(W1, W2_copy, H_dummy, mode_opti);
     return W2_copy;
 }
 
-int get_aligned_distance(const MatrixXi& W1, MatrixXi W2) {
+int get_aligned_distance(const MatrixXi& W1, MatrixXi W2, string mode_opti) {
     MatrixXi H_dummy = MatrixXi::Zero(W2.cols(), 1); 
-    align_in_place(W1, W2, H_dummy);
-    return count_diff(W1, W2);
+    align_in_place(W1, W2, H_dummy, mode_opti);
+    if(mode_opti == "BMF"){
+        return count_diff(W1, W2);
+    }else{
+        return (W1-W2).lpNorm<1>();
+    }
 }
 
 PYBIND11_MODULE(fast_solver, m) {
@@ -687,6 +706,6 @@ PYBIND11_MODULE(fast_solver, m) {
           py::arg("X"), py::arg("XT"), py::arg("Pop_W"), py::arg("Pop_H"), py::arg("Pop_Fitness"),
           py::arg("num_children"),
           py::arg("LW"), py::arg("UW"), py::arg("LH"), py::arg("UH"),
-          py::arg("mode_opti"), py::arg("seed") = 42
+          py::arg("mode_opti"), py::arg("seed") = 42, py::arg("remaining_time")
           );
 }

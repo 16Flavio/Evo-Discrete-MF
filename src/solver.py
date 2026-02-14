@@ -160,16 +160,16 @@ def metaheuristic(X, r, LW, UW, LH, UH, mode_opti, TIME_LIMIT=300.0, N=100, debu
             H_init = np.random.randint(P_L, P_U + 1, size=best_H.shape)
 
             W_opti, H_opti, f = optimize_alternating_wrapper(
-                active_X_f, active_XT_f, W_init, H_init, G_L, G_U, P_L, P_U, mode_opti, max_iters=5
+                active_X_f, active_XT_f, W_init, H_init, G_L, G_U, P_L, P_U, mode_opti, max_iters=1
             )
 
             population.append([f, (W_opti, H_opti)])
 
         temp_hashes = set() 
         children = generateNewGeneration(
-            temp_hashes, population, len(population)//2, active_X_f, active_XT_f,
+            temp_hashes, population, N//3, active_X_f, active_XT_f,
             G_L, G_U, P_L, P_U, mode_opti,
-            start_time, TIME_LIMIT
+            time.time()-start_time, TIME_LIMIT - 5.0
         )
         
         if children:

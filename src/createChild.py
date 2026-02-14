@@ -39,7 +39,8 @@ def generateNewGeneration(seen_hashes, population, num_child, X_f, XT_f, LW, UW,
             int(num_child),
             int(LW), int(UW), int(LH), int(UH),
             str(mode_opti),
-            int(current_cpp_seed)
+            int(current_cpp_seed),
+            float(TIME_LIMIT-start)
         )
         
         children = []
