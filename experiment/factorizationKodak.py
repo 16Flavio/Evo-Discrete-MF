@@ -109,72 +109,132 @@ def rel_error(X, Xhat, eps=1e-12):
     return np.linalg.norm(X - Xhat, "fro")/ (np.linalg.norm(X,"fro") + eps)
 
 if __name__ == "__main__":
-    img = iio.imread("data/kodak/kodim01.png")
-    print(img.shape, img.dtype)
-    log("Image : kodim01.png")
+
+    input_dir = "data/kodak"
+    output_dir = "experiment/result_experiment_kodak"
+    os.makedirs(output_dir, exist_ok=True)
 
     np.random.seed(42)
     random.seed(42)
 
-    R = img[:, :, 0]
-    G = img[:, :, 1]
-    B = img[:, :, 2]
+    valid_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tif')
+    image_files = sorted([f for f in os.listdir(input_dir) if f.lower().endswith(valid_extensions)])
+
+    if not image_files:
+        log(f"Aucune image trouvée dans {input_dir}")
+        exit()
+
+    log(f"Début du traitement de {len(image_files)} images...")
 
     NUM_MINUTES = 5
     r = 40
     a, b = 0, 15
 
-    import time
-    t0 = time.time()
-    while time.time() - t0 < NUM_MINUTES*60:
-        WR, HR = method_from_quantization_aware(R, r, choixinit="rand", alpha=a, beta=b)
-    t0 = time.time()
-    while time.time() - t0 < NUM_MINUTES*60: 
-        WG, HG = method_from_quantization_aware(G, r, choixinit="rand", alpha=a, beta=b)
-    t0 = time.time()
-    while time.time() - t0 < NUM_MINUTES*60:
-        WB, HB = method_from_quantization_aware(B, r, choixinit="rand", alpha=a, beta=b)
+    for filename in image_files:
+        filepath = os.path.join(input_dir, filename)
+        log(f"--- Traitement de l'image : {filename} ---")
 
-    WR_EvoIMF, HR_EvoIMF = my_method_imf(R, r, alpha=a, beta=b, budgettemps=NUM_MINUTES*60)
-    log("Red fini")
-    WG_EvoIMF, HG_EvoIMF = my_method_imf(G, r, alpha=a, beta=b, budgettemps=NUM_MINUTES*60)
-    log("Green fini")
-    WB_EvoIMF, HB_EvoIMF = my_method_imf(B, r, alpha=a, beta=b, budgettemps=NUM_MINUTES*60)
-    log("Blue fini")
+        try:
+            img = iio.imread(filepath)
+        except Exception as e:
+            log(f"Erreur lors de la lecture de {filename}: {e}")
+            continue
 
-    log(f"Erreur relative R pour QMF : {(np.linalg.norm(R-WR@HR.T)/(np.linalg.norm(R)+1e-12))*100:.2f} %")
-    log(f"Erreur relative G pour QMF : {(np.linalg.norm(G-WG@HG.T)/(np.linalg.norm(G)+1e-12))*100:.2f} %")
-    log(f"Erreur relative B pour QMF : {(np.linalg.norm(B-WB@HB.T)/(np.linalg.norm(B)+1e-12))*100:.2f} %")
+        if len(img.shape) == 2:
+            img = np.stack((img,)*3, axis=-1)
 
-    log(f"Erreur relative R pour EvoIMF : {(np.linalg.norm(R-WR_EvoIMF@HR_EvoIMF)/(np.linalg.norm(R)+1e-12))*100:.2f} %")
-    log(f"Erreur relative G pour EvoIMF : {(np.linalg.norm(G-WG_EvoIMF@HG_EvoIMF)/(np.linalg.norm(G)+1e-12))*100:.2f} %")
-    log(f"Erreur relative B pour EvoIMF : {(np.linalg.norm(B-WB_EvoIMF@HB_EvoIMF)/(np.linalg.norm(B)+1e-12))*100:.2f} %")
+        R = img[:, :, 0]
+        G = img[:, :, 1]
+        B = img[:, :, 2]
 
-    # Reconstruction + clamp + conversion uint8
-    R_rec = np.clip(WR @ HR.T, 0, 255)
-    G_rec = np.clip(WG @ HG.T, 0, 255)
-    B_rec = np.clip(WB @ HB.T, 0, 255)
+        import time
 
-    R_rec_EvoIMF = np.clip(WR_EvoIMF@HR_EvoIMF, 0, 255)
-    G_rec_EvoIMF = np.clip(WG_EvoIMF@HG_EvoIMF, 0, 255)
-    B_rec_EvoIMF = np.clip(WB_EvoIMF@HB_EvoIMF, 0, 255)
+        WR, HR = method_from_quantization_aware(R, r, choixinit="svd", alpha=a, beta=b)
+        best_err = np.linalg.norm(R-WR@HR.T)/(np.linalg.norm(R)+1e-12)
+        log(f"Erreur relative R pour QMF : {(best_err)*100:.2f} %")
+        t0 = time.time()
+        
+        while time.time() - t0 < NUM_MINUTES*60:
+            W_tempR, H_tempR = method_from_quantization_aware(R, r, choixinit="rand", alpha=a, beta=b)
+            err = np.linalg.norm(R-W_tempR@H_tempR.T)/(np.linalg.norm(R)+1e-12)
+            if err < best_err:
+                WR, HR = W_tempR, H_tempR
+                best_err = err
+                log(f"Erreur relative R pour QMF : {(np.linalg.norm(R-WR@HR.T)/(np.linalg.norm(R)+1e-12))*100:.2f} %")
+        
+        WG, HG = method_from_quantization_aware(G, r, choixinit="svd", alpha=a, beta=b)
+        best_err = np.linalg.norm(G-WG@HG.T)/(np.linalg.norm(G)+1e-12)
+        log(f"Erreur relative G pour QMF : {(best_err)*100:.2f} %")
+        t0 = time.time()
 
-    R8 = np.rint(R_rec).astype(np.uint8)
-    G8 = np.rint(G_rec).astype(np.uint8)
-    B8 = np.rint(B_rec).astype(np.uint8)
+        while time.time() - t0 < NUM_MINUTES*60: 
+            W_tempG, H_tempG = method_from_quantization_aware(G, r, choixinit="rand", alpha=a, beta=b)
+            err = np.linalg.norm(G-W_tempG@H_tempG.T)/(np.linalg.norm(G)+1e-12)
+            if err < best_err:
+                WG, HG = W_tempG, H_tempG
+                best_err = err
+                log(f"Erreur relative G pour QMF : {(np.linalg.norm(G-WG@HG.T)/(np.linalg.norm(G)+1e-12))*100:.2f} %")
 
-    R8_EvoIMF = np.rint(R_rec_EvoIMF).astype(np.uint8)
-    G8_EvoIMF = np.rint(G_rec_EvoIMF).astype(np.uint8)
-    B8_EvoIMF = np.rint(B_rec_EvoIMF).astype(np.uint8)
+        WB, HB = method_from_quantization_aware(B, r, choixinit="svd", alpha=a, beta=b)
+        best_err = np.linalg.norm(B-WB@HB.T)/(np.linalg.norm(B)+1e-12)
+        log(f"Erreur relative B pour QMF : {(best_err)*100:.2f} %")
+        t0 = time.time()
+        
+        while time.time() - t0 < NUM_MINUTES*60:
+            W_tempB, H_tempB = method_from_quantization_aware(B, r, choixinit="rand", alpha=a, beta=b)
+            err = np.linalg.norm(B-W_tempB@H_tempB.T)/(np.linalg.norm(B)+1e-12)
+            if err < best_err:
+                WB, HB = W_tempB, H_tempB
+                best_err = err
+                log(f"Erreur relative B pour QMF : {(np.linalg.norm(B-WB@HB.T)/(np.linalg.norm(B)+1e-12))*100:.2f} %")
 
-    img = np.stack([R8, G8, B8], axis=2)
+        WR_EvoIMF, HR_EvoIMF = my_method_imf(R, r, alpha=a, beta=b, budgettemps=NUM_MINUTES*60)
+        log(f"Erreur relative R pour EvoIMF : {(np.linalg.norm(R-WR_EvoIMF@HR_EvoIMF)/(np.linalg.norm(R)+1e-12))*100:.2f} %")
+        WG_EvoIMF, HG_EvoIMF = my_method_imf(G, r, alpha=a, beta=b, budgettemps=NUM_MINUTES*60)
+        log(f"Erreur relative G pour EvoIMF : {(np.linalg.norm(G-WG_EvoIMF@HG_EvoIMF)/(np.linalg.norm(G)+1e-12))*100:.2f} %")
+        WB_EvoIMF, HB_EvoIMF = my_method_imf(B, r, alpha=a, beta=b, budgettemps=NUM_MINUTES*60)
+        log(f"Erreur relative B pour EvoIMF : {(np.linalg.norm(B-WB_EvoIMF@HB_EvoIMF)/(np.linalg.norm(B)+1e-12))*100:.2f} %")
 
-    img_EvoIMF = np.stack([R8_EvoIMF, G8_EvoIMF, B8_EvoIMF], axis = 2)
+        errR_QMF = np.linalg.norm(R-WR@HR.T)/(np.linalg.norm(R)+1e-12)
+        errG_QMF = np.linalg.norm(G-WG@HG.T)/(np.linalg.norm(G)+1e-12)
+        errB_QMF = np.linalg.norm(B-WB@HB.T)/(np.linalg.norm(B)+1e-12)
+        mean_error_QMF = (errR_QMF + errG_QMF + errB_QMF)/3
 
-    output_dir = "experiment/result_experiment_kodak"
-    os.makedirs(output_dir, exist_ok=True)
+        errR_EvoMF = np.linalg.norm(R-WR_EvoIMF@HR_EvoIMF)/(np.linalg.norm(R)+1e-12)
+        errG_EvoMF = np.linalg.norm(G-WG_EvoIMF@HG_EvoIMF)/(np.linalg.norm(G)+1e-12)
+        errB_EvoMF = np.linalg.norm(B-WB_EvoIMF@HB_EvoIMF)/(np.linalg.norm(B)+1e-12)
+        mean_error_EvoMF = (errR_EvoMF + errG_EvoMF + errB_EvoMF)/3
 
-    iio.imwrite(os.path.join(output_dir, "reconstruction_QMF.png"), img)
-    iio.imwrite(os.path.join(output_dir, "reconstruction_EvoIMF.png"), img_EvoIMF)
+        # Reconstruction + clamp + conversion uint8
+        R_rec = np.clip(WR @ HR.T, 0, 255)
+        G_rec = np.clip(WG @ HG.T, 0, 255)
+        B_rec = np.clip(WB @ HB.T, 0, 255)
 
-    print(f"Images sauvegardées dans le dossier '{output_dir}'.")
+        R_rec_EvoIMF = np.clip(WR_EvoIMF@HR_EvoIMF, 0, 255)
+        G_rec_EvoIMF = np.clip(WG_EvoIMF@HG_EvoIMF, 0, 255)
+        B_rec_EvoIMF = np.clip(WB_EvoIMF@HB_EvoIMF, 0, 255)
+
+        R8 = np.rint(R_rec).astype(np.uint8)
+        G8 = np.rint(G_rec).astype(np.uint8)
+        B8 = np.rint(B_rec).astype(np.uint8)
+
+        R8_EvoIMF = np.rint(R_rec_EvoIMF).astype(np.uint8)
+        G8_EvoIMF = np.rint(G_rec_EvoIMF).astype(np.uint8)
+        B8_EvoIMF = np.rint(B_rec_EvoIMF).astype(np.uint8)
+
+        img = np.stack([R8, G8, B8], axis=2)
+
+        img_EvoIMF = np.stack([R8_EvoIMF, G8_EvoIMF, B8_EvoIMF], axis = 2)
+
+        base_name = os.path.splitext(filename)[0]
+
+        qmf_filename = f"{base_name}_QMF_err_{mean_error_QMF*100:.2f}.png"
+        evo_filename = f"{base_name}_EvoIMF_err_{mean_error_EvoMF*100:.2f}.png"
+        
+        iio.imwrite(os.path.join(output_dir, qmf_filename), img)
+        iio.imwrite(os.path.join(output_dir, evo_filename), img_EvoIMF)
+
+        log(f"Sauvegardé : {qmf_filename} et {evo_filename}")
+        log("-" * 30)
+
+    log(f"Tout les traitements sont terminés. Résultats dans {output_dir}")
