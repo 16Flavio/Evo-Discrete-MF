@@ -129,12 +129,12 @@ The output file will contain:
 <table>
   <tr>
     <td align="center">
-      <img src="experiment/result_experiment_kodak/reconstruction_QMF.png" width="300px;" alt="QMF"/>
+      <img src="experiment/result_experiment_kodak/kodim01_QMF_err_0.16.png" width="300px;" alt="QMF"/>
       <br />
       <b>QMF r=40 bounds=[0,15]</b><br>
     </td>
     <td align="center">
-      <img src="experiment/result_experiment_kodak/reconstruction_EvoIMF.png" width="300px;" alt="EvoMF"/>
+      <img src="experiment/result_experiment_kodak/kodim01_EvoIMF_err_0.14.png" width="300px;" alt="EvoMF"/>
       <br />
       <b>EvoMF r=40 bounds=[0,15]</b><br>
     </td>
