@@ -110,16 +110,19 @@ The output file will contain:
       <img src="experiment/result_experiment_RELU/16OriginalImages.png" width="200px;" alt="Original"/>
       <br />
       <b>Original Images</b><br>
+      <b></b><br>
     </td>
     <td align="center">
       <img src="experiment/result_experiment_RELU/16ReconstructedImages-ReLuNMD_r5.png" width="200px;" alt="ReLU-NMD"/>
       <br />
       <b>ReLU-NMD r=5 0.43 MB</b><br>
+      <b>Relative error: 60.5%</b><br>
     </td>
     <td align="center">
       <img src="experiment/result_experiment_RELU/16ReconstructedImages-I-ReLu-NMD_r40.png" width="200px;" alt="I-ReLU-NMD"/>
       <br />
       <b>I-ReLU-NMD r=40 0.43 MB</b><br>
+      <b>Relative error: 22.8%</b><br>
     </td>
   </tr>
 </table>
@@ -132,11 +135,13 @@ The output file will contain:
       <img src="experiment/result_experiment_kodak/kodim01_QMF_err_0.16.png" width="300px;" alt="QMF"/>
       <br />
       <b>QMF r=40 bounds=[0,15]</b><br>
+      <b>Mean relative error (3 channels): 15.7%</b><br>
     </td>
     <td align="center">
       <img src="experiment/result_experiment_kodak/kodim01_EvoIMF_err_0.14.png" width="300px;" alt="EvoMF"/>
       <br />
       <b>EvoMF r=40 bounds=[0,15]</b><br>
+      <b>Mean relative error (3 channels): 13.5%</b><br>
     </td>
   </tr>
 </table>
